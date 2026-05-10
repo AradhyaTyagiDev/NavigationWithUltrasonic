@@ -1,18 +1,53 @@
-#include <Arduino.h>
+#include <stdio.h>
 
-// put function declarations here:
-int myFunction(int, int);
+#include "UltrasonicSensor.hpp"
 
-void setup() {
-  // put your setup code here, to run once:
-  int result = myFunction(2, 3);
-}
+extern "C" void app_main()
+{
+    UltrasonicSensor::Config config;
 
-void loop() {
-  // put your main code here, to run repeatedly:
-}
+    config.trigPin = GPIO_NUM_25;
 
-// put function definitions here:
-int myFunction(int x, int y) {
-  return x + y;
+    config.echoPin = GPIO_NUM_32;
+
+    config.taskPriority = 3;
+
+    config.taskCore = 0;
+
+    /// 20 measurements/sec
+    config.sensorFrequencyHz = 20;
+
+    static UltrasonicSensor ultrasonic(config);
+
+    if (!ultrasonic.initialize())
+    {
+        printf("Ultrasonic init failed\n");
+
+        return;
+    }
+
+    if (!ultrasonic.start())
+    {
+        printf("Ultrasonic start failed\n");
+
+        return;
+    }
+
+    UltrasonicSensorData data;
+
+    while (true)
+    {
+        if (xQueueReceive(
+                ultrasonic.getQueueHandle(),
+                &data,
+                pdMS_TO_TICKS(100)) == pdTRUE)
+        {
+            float distanceCm =
+                static_cast<float>(data.pulseWidthUs) / 58.0f;
+
+            printf(
+                "Distance: %.2f cm\n",
+                distanceCm);
+        }
+    }
 }
