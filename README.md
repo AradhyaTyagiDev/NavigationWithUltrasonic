@@ -1,6 +1,111 @@
 # NavigationWithUltrasonic
 Navigation With 1 Ultrasonic Sensor
 
+# Project Architecture:
+
+## High Level Architecture:
+
+```text
+RobotController
+    ↓
+Sensor Layer
+    ↓
+Filter Layer
+    ↓
+ObstacleManager
+    ↓
+NavigationManager
+    ↓
+MotionPlanner
+    ↓
+MotorController
+```
+
+
+## File Structure:
+
+```text
+project/
+│
+├── platformio.ini
+├── CMakeLists.txt
+│
+├── src/
+│   └── main.cpp
+│
+├── components/
+│
+│   ├── robot/
+│   │   ├── RobotController.hpp
+│   │   ├── RobotController.cpp
+│   │   └── CMakeLists.txt
+│   │
+│   ├── sensor/
+│   │   ├── UltrasonicSensor.hpp
+│   │   ├── UltrasonicSensor.cpp
+│   │   ├── UltrasonicSensorTypes.hpp
+│   │   └── CMakeLists.txt
+│   │
+│   ├── filter/
+│   │   ├── UltrasonicFilter.hpp
+│   │   ├── UltrasonicFilter.cpp
+│   │   ├── UltrasonicFilterTypes.hpp
+│   │   ├── UltrasonicFilterConfig.hpp
+│   │   └── CMakeLists.txt
+│   │
+│   ├── decision/
+│   │   │
+│   │   ├── obstacle/
+│   │   │   ├── ObstacleManager.hpp
+│   │   │   ├── ObstacleManager.cpp
+│   │   │   ├── ObstacleManagerConfig.hpp
+│   │   │   ├── ObstacleAnalysis.hpp
+│   │   │   ├── ObstacleMemory.hpp
+│   │   │   ├── DangerLevel.hpp
+│   │   │   └── CMakeLists.txt
+│   │   │
+│   │   └── navigation/
+│   │       ├── NavigationManager.hpp
+│   │       ├── NavigationManager.cpp
+│   │       ├── NavigationDecision.hpp
+│   │       ├── NavigationState.hpp
+│   │       └── CMakeLists.txt
+│   │
+│   ├── motion/
+│   │   ├── MotionPlanner.hpp
+│   │   ├── MotionPlanner.cpp
+│   │   ├── MotionCommand.hpp
+│   │   ├── MotionPlannerConfig.hpp
+│   │   └── CMakeLists.txt
+│   │
+│   ├── motor/
+│   │   ├── MotorController.hpp
+│   │   ├── MotorController.cpp
+│   │   ├── MotorDriver.hpp
+│   │   ├── MotorDriver.cpp
+│   │   ├── MotorState.hpp
+│   │   └── CMakeLists.txt
+│   │
+│   ├── common/
+│   │   ├── Logger.hpp
+│   │   ├── TimeUtils.hpp
+│   │   ├── MathUtils.hpp
+│   │   ├── Constants.hpp
+│   │   └── CMakeLists.txt
+│   │
+│   └── interfaces/
+│       ├── ISensor.hpp
+│       ├── IFilter.hpp
+│       ├── IMotionPlanner.hpp
+│       └── CMakeLists.txt
+│
+└── docs/
+    ├── architecture.md
+    ├── filtering_pipeline.md
+    └── navigation_pipeline.md
+```
+
+
 # Filter used:
 1. Validity Check: Range Validation
 	1. Timeout handling: When timeout occurs:Treat as: "No valid obstacle detected"
