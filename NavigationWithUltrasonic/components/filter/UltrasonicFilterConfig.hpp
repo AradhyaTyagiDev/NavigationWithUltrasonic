@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 
+// Define signal processing behavior and thresholds for ultrasonic sensor data
 struct UltrasonicFilterConfig
 {
     float minDistanceCm = 2.0f;

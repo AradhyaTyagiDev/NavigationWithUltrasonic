@@ -23,10 +23,12 @@ public:
 
         uint32_t taskStackSize = 4096;
 
-        UBaseType_t taskPriority = 3;
+        UBaseType_t taskPriority = 4;
 
+        // Core 0 reserved for I/O
         BaseType_t taskCore = 0;
 
+        // 20Hz = every 50ms
         uint32_t sensorFrequencyHz = 20;
     };
 

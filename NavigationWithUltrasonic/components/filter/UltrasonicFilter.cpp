@@ -1,6 +1,4 @@
-#pragma once
-
-#include "UltrasonicFilterTypes.hpp"
+#include "FilteredSensorData.hpp"
 #include "UltrasonicFilterConfig.hpp"
 #include "UltrasonicFilter.hpp"
 
