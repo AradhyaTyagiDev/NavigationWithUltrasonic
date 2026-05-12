@@ -7,6 +7,30 @@ Navigation With 1 Ultrasonic Sensor
 
 ```text
 RobotController
+│
+├── Sensor Layer
+│   └── UltrasonicSensor
+│
+├── Filter Layer
+│   └── UltrasonicFilter
+│
+├── Decision Layer
+│   ├── ObstacleManager
+│   └── NavigationManager
+│
+├── Cognitive Layer
+│   ├── BehaviorTreeManager
+│   └── PathPlanner
+│
+├── Motion Layer
+│   └── MotionPlanner
+│
+└── Hardware Layer
+    └── MotorController
+```
+
+```text
+RobotController
     ↓
 Sensor Layer
     ↓
@@ -15,6 +39,10 @@ Filter Layer
 ObstacleManager
     ↓
 NavigationManager
+	↓	
+BehaviorTreeManager
+	↓
+PathPlanner
     ↓
 MotionPlanner
     ↓
