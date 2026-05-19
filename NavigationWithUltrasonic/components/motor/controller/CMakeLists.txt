@@ -1,10 +1,10 @@
 idf_component_register(
     SRCS
-        "MotionPlanner.cpp"
+        "MotorController.cpp"
 
     INCLUDE_DIRS
         "."
 
     REQUIRES
-        navigation
+        obstacle
 )
