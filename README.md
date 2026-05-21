@@ -47,6 +47,10 @@ PathPlanner
 MotionPlanner
     ↓
 MotorController
+	↓
+IMotorDriver Interface
+	↓
+TB6612Driver
 ```
 
 
