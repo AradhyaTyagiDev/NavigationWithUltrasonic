@@ -596,7 +596,7 @@ MotorController::generateRightWheelCommand(
     // Need to fix
     const float speed =
         motionCommand.rightWheelSpeedPercent;
-
+    // Need to cleanup
     command.speedPercent =
         std::fabs(speed);
 
