@@ -8,9 +8,9 @@
 #include <cmath>
 
 #include "esp_log.h"
+#include "esp_timer.h"
 
-static const char *TAG =
-    "MotorController";
+static const char *TAG = "MotorController";
 
 //====================================================
 // Constructor
@@ -33,7 +33,7 @@ bool MotorController::initialize()
     ScopedControllerLock lock(this);
 
     //-----------------------------------------
-    // Driver validation
+    // Driver initialization
     //-----------------------------------------
 
     if (!m_motorDriver.initialize())
@@ -52,7 +52,7 @@ bool MotorController::initialize()
     m_memory = {};
 
     //-----------------------------------------
-    // Initial state
+    // Initial runtime state
     //-----------------------------------------
 
     transitionToState(
@@ -73,9 +73,21 @@ void MotorController::shutdown()
 {
     ScopedControllerLock lock(this);
 
+    //-----------------------------------------
+    // Stop locomotion
+    //-----------------------------------------
+
     stopInternal();
 
+    //-----------------------------------------
+    // Shutdown driver
+    //-----------------------------------------
+
     m_motorDriver.shutdown();
+
+    //-----------------------------------------
+    // Runtime state
+    //-----------------------------------------
 
     transitionToState(
         MotorState::Idle);
@@ -86,7 +98,7 @@ void MotorController::shutdown()
 }
 
 //====================================================
-// Main execution entry
+// Main motion execution pipeline
 //====================================================
 
 void MotorController::executeMotion(
@@ -94,12 +106,27 @@ void MotorController::executeMotion(
 {
     ScopedControllerLock lock(this);
 
+    executeMotionInternal(
+        motionCommand);
+}
+
+//====================================================
+// Internal motion execution
+//====================================================
+
+void MotorController::executeMotionInternal(
+    const MotionCommand &motionCommand)
+{
     //-----------------------------------------
-    // Emergency state protection
+    // Emergency protection
     //-----------------------------------------
 
     if (m_memory.emergencyStopActive)
     {
+        ESP_LOGW(
+            TAG,
+            "Ignoring motion during emergency");
+
         return;
     }
 
@@ -107,18 +134,10 @@ void MotorController::executeMotion(
     // Driver health validation
     //-----------------------------------------
 
-    if (!m_motorDriver.isReady())
+    if (!validateDriverHealth())
     {
         handleFault(
-            "Driver not ready");
-
-        return;
-    }
-
-    if (m_motorDriver.hasFault())
-    {
-        handleFault(
-            "Driver fault");
+            "Driver health validation failed");
 
         return;
     }
@@ -150,25 +169,10 @@ void MotorController::executeMotion(
     }
 
     //-----------------------------------------
-    // Execute internally
+    // Runtime timestamp
     //-----------------------------------------
 
-    executeMotionInternal(
-        motionCommand);
-}
-
-//====================================================
-// Internal motion execution
-//====================================================
-
-void MotorController::executeMotionInternal(
-    const MotionCommand &motionCommand)
-{
-    //-----------------------------------------
-    // Timestamp
-    //-----------------------------------------
-
-    const uint32_t timestampMs =
+    const uint32_t currentTimestampMs =
         getCurrentTimestampMs();
 
     //-----------------------------------------
@@ -199,10 +203,52 @@ void MotorController::executeMotionInternal(
     applyMotionSmoothing(
         leftWheelCommand,
         rightWheelCommand,
-        timestampMs);
+        currentTimestampMs);
 
     //-----------------------------------------
-    // Braking coordination
+    // Deadzone compensation
+    //-----------------------------------------
+
+    applyDeadzoneCompensation(
+        leftWheelCommand);
+
+    applyDeadzoneCompensation(
+        rightWheelCommand);
+
+    //-----------------------------------------
+    // Startup boost
+    //-----------------------------------------
+
+    applyStartupBoost(
+        leftWheelCommand,
+        m_memory.leftWheelState);
+
+    applyStartupBoost(
+        rightWheelCommand,
+        m_memory.rightWheelState);
+
+    //-----------------------------------------
+    // Reverse transition validation
+    //-----------------------------------------
+
+    if (!validateReverseTransition(
+            leftWheelCommand,
+            m_memory.leftWheelState))
+    {
+        leftWheelCommand.speedPercent =
+            0.0f;
+    }
+
+    if (!validateReverseTransition(
+            rightWheelCommand,
+            m_memory.rightWheelState))
+    {
+        rightWheelCommand.speedPercent =
+            0.0f;
+    }
+
+    //-----------------------------------------
+    // Coordinated braking
     //-----------------------------------------
 
     applyCoordinatedBraking(
@@ -210,10 +256,11 @@ void MotorController::executeMotionInternal(
         rightWheelCommand);
 
     //-----------------------------------------
-    // Emergency handling
+    // Emergency behavior
     //-----------------------------------------
 
-    if (motionCommand.emergencyStop)
+    if (
+        motionCommand.emergencyBrakingActive)
     {
         applyEmergencyBehavior(
             leftWheelCommand,
@@ -221,28 +268,32 @@ void MotorController::executeMotionInternal(
     }
 
     //-----------------------------------------
-    // Driver commands
+    // Sequence ID
     //-----------------------------------------
 
     const uint32_t sequenceId =
         ++m_sequenceCounter;
+
+    //-----------------------------------------
+    // Generate driver commands
+    //-----------------------------------------
 
     MotorDriverCommand leftDriverCommand =
         generateMotorDriverCommand(
             MotorChannel::Left,
             leftWheelCommand,
             sequenceId,
-            timestampMs);
+            currentTimestampMs);
 
     MotorDriverCommand rightDriverCommand =
         generateMotorDriverCommand(
             MotorChannel::Right,
             rightWheelCommand,
             sequenceId,
-            timestampMs);
+            currentTimestampMs);
 
     //-----------------------------------------
-    // Execute
+    // Execute wheel commands
     //-----------------------------------------
 
     executeWheelCommands(
@@ -250,18 +301,18 @@ void MotorController::executeMotionInternal(
         rightDriverCommand);
 
     //-----------------------------------------
-    // Update wheel state
+    // Update runtime wheel state
     //-----------------------------------------
 
     updateWheelState(
         m_memory.leftWheelState,
         leftWheelCommand,
-        timestampMs);
+        currentTimestampMs);
 
     updateWheelState(
         m_memory.rightWheelState,
         rightWheelCommand,
-        timestampMs);
+        currentTimestampMs);
 
     //-----------------------------------------
     // Update runtime memory
@@ -269,10 +320,10 @@ void MotorController::executeMotionInternal(
 
     updateRuntimeMemory(
         motionCommand,
-        timestampMs);
+        currentTimestampMs);
 
     //-----------------------------------------
-    // Update state
+    // State transition
     //-----------------------------------------
 
     transitionToState(
@@ -284,6 +335,9 @@ void MotorController::executeMotionInternal(
     //-----------------------------------------
 
     m_memory.executedCommandCount++;
+
+    m_memory.motionExecutionActive =
+        true;
 }
 
 //====================================================
@@ -296,7 +350,16 @@ void MotorController::update(
     ScopedControllerLock lock(this);
 
     //-----------------------------------------
-    // Motion timeout
+    // Skip ultra-fast updates
+    //-----------------------------------------
+
+    if (shouldSkipUpdate(currentTimestampMs))
+    {
+        return;
+    }
+
+    //-----------------------------------------
+    // Motion timeout supervision
     //-----------------------------------------
 
     if (
@@ -305,7 +368,7 @@ void MotorController::update(
     {
         ESP_LOGW(
             TAG,
-            "Motion timeout");
+            "Motion timeout detected");
 
         stopInternal();
     }
@@ -343,7 +406,16 @@ void MotorController::emergencyStop()
 void MotorController::emergencyStopInternal()
 {
     //-----------------------------------------
-    // Activate emergency state
+    // Already active
+    //-----------------------------------------
+
+    if (m_memory.emergencyStopActive)
+    {
+        return;
+    }
+
+    //-----------------------------------------
+    // Activate runtime emergency state
     //-----------------------------------------
 
     m_memory.emergencyStopActive =
@@ -365,7 +437,7 @@ void MotorController::emergencyStopInternal()
     transitionToState(
         MotorState::EmergencyStop);
 
-    ESP_LOGW(
+    ESP_LOGE(
         TAG,
         "Emergency stop activated");
 }
@@ -378,10 +450,22 @@ void MotorController::clearEmergencyStop()
 {
     ScopedControllerLock lock(this);
 
+    //-----------------------------------------
+    // Driver clear
+    //-----------------------------------------
+
     m_motorDriver.clearEmergencyStop();
+
+    //-----------------------------------------
+    // Runtime reset
+    //-----------------------------------------
 
     m_memory.emergencyStopActive =
         false;
+
+    //-----------------------------------------
+    // Runtime state
+    //-----------------------------------------
 
     transitionToState(
         MotorState::Idle);
@@ -408,28 +492,62 @@ void MotorController::stop()
 
 void MotorController::stopInternal()
 {
+    //-----------------------------------------
+    // Driver stop
+    //-----------------------------------------
+
     m_motorDriver.stopAllMotors();
+
+    //-----------------------------------------
+    // Runtime state
+    //-----------------------------------------
 
     transitionToState(
         MotorState::Idle);
+
+    //-----------------------------------------
+    // Runtime flags
+    //-----------------------------------------
 
     m_memory.motionExecutionActive =
         false;
 }
 
 //====================================================
-// Reset runtime state
+// Runtime reset
 //====================================================
 
 void MotorController::reset()
 {
     ScopedControllerLock lock(this);
 
+    //-----------------------------------------
+    // Stop locomotion
+    //-----------------------------------------
+
     stopInternal();
+
+    //-----------------------------------------
+    // Driver reset
+    //-----------------------------------------
+
+    m_motorDriver.reset();
+
+    //-----------------------------------------
+    // Reset runtime memory
+    //-----------------------------------------
 
     m_memory = {};
 
+    //-----------------------------------------
+    // Reset sequence generator
+    //-----------------------------------------
+
     m_sequenceCounter = 0;
+
+    //-----------------------------------------
+    // Runtime state
+    //-----------------------------------------
 
     transitionToState(
         MotorState::Idle);
@@ -440,7 +558,7 @@ void MotorController::reset()
 }
 
 //====================================================
-// Runtime state
+// Current runtime state
 //====================================================
 
 MotorState MotorController::getCurrentState() const
@@ -477,6 +595,33 @@ bool MotorController::isEmergencyStopActive() const
 }
 
 //====================================================
+// Driver health validation
+//====================================================
+
+bool MotorController::validateDriverHealth() const
+{
+    //-----------------------------------------
+    // Ready state
+    //-----------------------------------------
+
+    if (!m_motorDriver.isReady())
+    {
+        return false;
+    }
+
+    //-----------------------------------------
+    // Driver fault
+    //-----------------------------------------
+
+    if (m_motorDriver.hasFault())
+    {
+        return false;
+    }
+
+    return true;
+}
+
+//====================================================
 // Motion validation
 //====================================================
 
@@ -488,13 +633,13 @@ bool MotorController::validateMotionCommand(
     //-----------------------------------------
 
     if (!std::isfinite(
-            motionCommand.leftWheelSpeedPercent))
+            motionCommand.leftWheelSpeed))
     {
         return false;
     }
 
     if (!std::isfinite(
-            motionCommand.rightWheelSpeedPercent))
+            motionCommand.rightWheelSpeed))
     {
         return false;
     }
@@ -504,15 +649,26 @@ bool MotorController::validateMotionCommand(
     //-----------------------------------------
 
     if (
-        motionCommand.leftWheelSpeedPercent < -1.0f ||
-        motionCommand.leftWheelSpeedPercent > 1.0f)
+        motionCommand.leftWheelSpeed < -1.0f ||
+        motionCommand.leftWheelSpeed > 1.0f)
     {
         return false;
     }
 
     if (
-        motionCommand.rightWheelSpeedPercent < -1.0f ||
-        motionCommand.rightWheelSpeedPercent > 1.0f)
+        motionCommand.rightWheelSpeed < -1.0f ||
+        motionCommand.rightWheelSpeed > 1.0f)
+    {
+        return false;
+    }
+
+    //-----------------------------------------
+    // Confidence validation
+    //-----------------------------------------
+
+    if (
+        motionCommand.motionConfidence <
+        0.0f)
     {
         return false;
     }
@@ -524,14 +680,13 @@ bool MotorController::validateMotionCommand(
 // Motion safety validation
 //====================================================
 
-bool MotorController::validateMotionSafety(
-    const MotionCommand &motionCommand) const
+bool MotorController::validateMotionSafety(const MotionCommand &motionCommand) const
 {
     //-----------------------------------------
     // Future:
-    // acceleration spikes
-    // unsafe reversals
     // wheel divergence
+    // instability
+    // unsafe acceleration
     //-----------------------------------------
 
     (void)motionCommand;
@@ -558,7 +713,7 @@ void MotorController::generateWheelCommands(
 }
 
 //====================================================
-// Left wheel command
+// Left wheel command generation
 //====================================================
 
 WheelCommand
@@ -567,16 +722,55 @@ MotorController::generateLeftWheelCommand(
 {
     WheelCommand command;
 
+    //-----------------------------------------
+    // Speed
+    //-----------------------------------------
+
     const float speed =
-        motionCommand.leftWheelSpeedPercent;
+        motionCommand.leftWheelSpeed;
 
     command.speedPercent =
         std::fabs(speed);
 
-    command.direction =
-        (speed >= 0.0f)
-            ? MotorDirection::Forward
-            : MotorDirection::Reverse;
+    //-----------------------------------------
+    // Direction
+    //-----------------------------------------
+
+    if (speed > 0.0f)
+    {
+        command.direction =
+            MotorDirection::Forward;
+    }
+    else if (speed < 0.0f)
+    {
+        command.direction =
+            MotorDirection::Reverse;
+    }
+    else
+    {
+        command.direction =
+            MotorDirection::Stop;
+    }
+
+    //-----------------------------------------
+    // Brake mode
+    //-----------------------------------------
+
+    command.brakeMode =
+        motionCommand.brakingActive
+            ? BrakeMode::Active
+            : BrakeMode::Coast;
+
+    //-----------------------------------------
+    // Emergency
+    //-----------------------------------------
+
+    command.emergencyBrake =
+        motionCommand.emergencyBrakingActive;
+
+    //-----------------------------------------
+    // Runtime timestamp
+    //-----------------------------------------
 
     command.timestampMs =
         getCurrentTimestampMs();
@@ -585,7 +779,7 @@ MotorController::generateLeftWheelCommand(
 }
 
 //====================================================
-// Right wheel command
+// Right wheel command generation
 //====================================================
 
 WheelCommand
@@ -593,17 +787,56 @@ MotorController::generateRightWheelCommand(
     const MotionCommand &motionCommand)
 {
     WheelCommand command;
-    // Need to fix
+
+    //-----------------------------------------
+    // Speed
+    //-----------------------------------------
+
     const float speed =
-        motionCommand.rightWheelSpeedPercent;
-    // Need to cleanup
+        motionCommand.rightWheelSpeed;
+
     command.speedPercent =
         std::fabs(speed);
 
-    command.direction =
-        (speed >= 0.0f)
-            ? MotorDirection::Forward
-            : MotorDirection::Reverse;
+    //-----------------------------------------
+    // Direction
+    //-----------------------------------------
+
+    if (speed > 0.0f)
+    {
+        command.direction =
+            MotorDirection::Forward;
+    }
+    else if (speed < 0.0f)
+    {
+        command.direction =
+            MotorDirection::Reverse;
+    }
+    else
+    {
+        command.direction =
+            MotorDirection::Stop;
+    }
+
+    //-----------------------------------------
+    // Brake mode
+    //-----------------------------------------
+
+    command.brakeMode =
+        motionCommand.brakingActive
+            ? BrakeMode::Active
+            : BrakeMode::Coast;
+
+    //-----------------------------------------
+    // Emergency
+    //-----------------------------------------
+
+    command.emergencyBrake =
+        motionCommand.emergencyBrakingActive;
+
+    //-----------------------------------------
+    // Runtime timestamp
+    //-----------------------------------------
 
     command.timestampMs =
         getCurrentTimestampMs();
@@ -625,15 +858,24 @@ void MotorController::applyWheelSynchronization(
     }
 
     //-----------------------------------------
-    // Prevent wheel divergence
+    // Wheel divergence protection
     //-----------------------------------------
 
-    const float difference =
+    const float speedDifference =
         std::fabs(
             leftWheelCommand.speedPercent -
             rightWheelCommand.speedPercent);
 
-    if (difference > 0.5f)
+    //-----------------------------------------
+    // Synchronization threshold
+    //-----------------------------------------
+
+    constexpr float maximumAllowedDifference =
+        0.6f;
+
+    if (
+        speedDifference >
+        maximumAllowedDifference)
     {
         const float average =
             (leftWheelCommand.speedPercent +
@@ -646,6 +888,13 @@ void MotorController::applyWheelSynchronization(
         rightWheelCommand.speedPercent =
             average;
     }
+
+    //-----------------------------------------
+    // Runtime state
+    //-----------------------------------------
+
+    m_memory.wheelSynchronizationActive =
+        true;
 }
 
 //====================================================
@@ -662,12 +911,30 @@ void MotorController::applyMotionSmoothing(
         return;
     }
 
+    //-----------------------------------------
+    // Left wheel
+    //-----------------------------------------
+
     applyAccelerationLimits(
         leftWheelCommand,
         m_memory.leftWheelState,
         currentTimestampMs);
 
+    applyDecelerationLimits(
+        leftWheelCommand,
+        m_memory.leftWheelState,
+        currentTimestampMs);
+
+    //-----------------------------------------
+    // Right wheel
+    //-----------------------------------------
+
     applyAccelerationLimits(
+        rightWheelCommand,
+        m_memory.rightWheelState,
+        currentTimestampMs);
+
+    applyDecelerationLimits(
         rightWheelCommand,
         m_memory.rightWheelState,
         currentTimestampMs);
@@ -682,6 +949,10 @@ void MotorController::applyAccelerationLimits(
     WheelState &wheelState,
     uint32_t currentTimestampMs)
 {
+    //-----------------------------------------
+    // Delta time
+    //-----------------------------------------
+
     const float deltaTimeSec =
         static_cast<float>(
             currentTimestampMs -
@@ -693,13 +964,25 @@ void MotorController::applyAccelerationLimits(
         return;
     }
 
+    //-----------------------------------------
+    // Maximum allowed acceleration
+    //-----------------------------------------
+
     const float maximumDelta =
         m_config.maximumAccelerationPercentPerSec *
         deltaTimeSec;
 
+    //-----------------------------------------
+    // Speed delta
+    //-----------------------------------------
+
     const float delta =
         wheelCommand.speedPercent -
         wheelState.currentSpeedPercent;
+
+    //-----------------------------------------
+    // Clamp acceleration
+    //-----------------------------------------
 
     if (delta > maximumDelta)
     {
@@ -718,6 +1001,10 @@ void MotorController::applyDecelerationLimits(
     WheelState &wheelState,
     uint32_t currentTimestampMs)
 {
+    //-----------------------------------------
+    // Delta time
+    //-----------------------------------------
+
     const float deltaTimeSec =
         static_cast<float>(
             currentTimestampMs -
@@ -729,13 +1016,25 @@ void MotorController::applyDecelerationLimits(
         return;
     }
 
+    //-----------------------------------------
+    // Maximum allowed deceleration
+    //-----------------------------------------
+
     const float maximumDelta =
         m_config.maximumDecelerationPercentPerSec *
         deltaTimeSec;
 
+    //-----------------------------------------
+    // Deceleration delta
+    //-----------------------------------------
+
     const float delta =
         wheelState.currentSpeedPercent -
         wheelCommand.speedPercent;
+
+    //-----------------------------------------
+    // Clamp deceleration
+    //-----------------------------------------
 
     if (delta > maximumDelta)
     {
@@ -758,6 +1057,10 @@ void MotorController::applyStartupBoost(
         return;
     }
 
+    //-----------------------------------------
+    // Startup transition
+    //-----------------------------------------
+
     if (
         wheelState.currentSpeedPercent <
             0.01f &&
@@ -777,6 +1080,10 @@ void MotorController::applyStartupBoost(
 void MotorController::applyDeadzoneCompensation(
     WheelCommand &wheelCommand)
 {
+    //-----------------------------------------
+    // Deadzone
+    //-----------------------------------------
+
     if (
         wheelCommand.speedPercent > 0.0f &&
         wheelCommand.speedPercent <
@@ -799,6 +1106,10 @@ void MotorController::applyCoordinatedBraking(
     {
         return;
     }
+
+    //-----------------------------------------
+    // Both wheels stopped
+    //-----------------------------------------
 
     if (
         leftWheelCommand.speedPercent <= 0.01f &&
@@ -828,17 +1139,29 @@ void MotorController::applyEmergencyBehavior(
     WheelCommand &leftWheelCommand,
     WheelCommand &rightWheelCommand)
 {
-    leftWheelCommand.emergencyBrake =
-        true;
-
-    rightWheelCommand.emergencyBrake =
-        true;
+    //-----------------------------------------
+    // Emergency braking
+    //-----------------------------------------
 
     leftWheelCommand.speedPercent =
         0.0f;
 
     rightWheelCommand.speedPercent =
         0.0f;
+
+    //-----------------------------------------
+    // Emergency brake flag
+    //-----------------------------------------
+
+    leftWheelCommand.emergencyBrake =
+        true;
+
+    rightWheelCommand.emergencyBrake =
+        true;
+
+    //-----------------------------------------
+    // Active braking
+    //-----------------------------------------
 
     leftWheelCommand.brakeMode =
         BrakeMode::Active;
@@ -848,7 +1171,7 @@ void MotorController::applyEmergencyBehavior(
 }
 
 //====================================================
-// Reverse transition protection
+// Reverse transition validation
 //====================================================
 
 bool MotorController::validateReverseTransition(
@@ -856,14 +1179,52 @@ bool MotorController::validateReverseTransition(
     const WheelState &wheelState) const
 {
     //-----------------------------------------
-    // Prevent rapid reverse switching
+    // Safe reverse disabled
+    //-----------------------------------------
+
+    if (!m_config.enableSafeReverseTransition)
+    {
+        return true;
+    }
+
+    //-----------------------------------------
+    // Current direction
+    //-----------------------------------------
+
+    const MotorDirection currentDirection =
+        wheelState.currentDirection;
+
+    //-----------------------------------------
+    // New direction
+    //-----------------------------------------
+
+    const MotorDirection newDirection =
+        wheelCommand.direction;
+
+    //-----------------------------------------
+    // Prevent instant reversal
     //-----------------------------------------
 
     if (
-        wheelState.currentDirection ==
+        currentDirection ==
             MotorDirection::Forward &&
-        wheelCommand.direction ==
+        newDirection ==
             MotorDirection::Reverse)
+    {
+        return (
+            wheelState.currentSpeedPercent <
+            0.1f);
+    }
+
+    //-----------------------------------------
+    // Reverse → forward
+    //-----------------------------------------
+
+    if (
+        currentDirection ==
+            MotorDirection::Reverse &&
+        newDirection ==
+            MotorDirection::Forward)
     {
         return (
             wheelState.currentSpeedPercent <
@@ -886,26 +1247,58 @@ MotorController::generateMotorDriverCommand(
 {
     MotorDriverCommand command;
 
+    //-----------------------------------------
+    // Channel
+    //-----------------------------------------
+
     command.channel =
         channel;
+
+    //-----------------------------------------
+    // Direction
+    //-----------------------------------------
 
     command.direction =
         wheelCommand.direction;
 
+    //-----------------------------------------
+    // PWM percentage
+    //-----------------------------------------
+
     command.pwmPercent =
         wheelCommand.speedPercent;
+
+    //-----------------------------------------
+    // Brake mode
+    //-----------------------------------------
 
     command.brakeMode =
         wheelCommand.brakeMode;
 
+    //-----------------------------------------
+    // Enable
+    //-----------------------------------------
+
     command.enabled =
         wheelCommand.enabled;
+
+    //-----------------------------------------
+    // Emergency stop
+    //-----------------------------------------
 
     command.emergencyStop =
         wheelCommand.emergencyBrake;
 
+    //-----------------------------------------
+    // Sequence ID
+    //-----------------------------------------
+
     command.sequenceId =
         sequenceId;
+
+    //-----------------------------------------
+    // Timestamp
+    //-----------------------------------------
 
     command.timestampMs =
         timestampMs;
@@ -921,6 +1314,10 @@ void MotorController::executeWheelCommands(
     const MotorDriverCommand &leftCommand,
     const MotorDriverCommand &rightCommand)
 {
+    //-----------------------------------------
+    // Synchronized driver execution
+    //-----------------------------------------
+
     m_motorDriver.executeDualCommand(
         leftCommand,
         rightCommand);
@@ -933,6 +1330,10 @@ void MotorController::executeWheelCommands(
 void MotorController::transitionToState(
     MotorState newState)
 {
+    //-----------------------------------------
+    // Validate transition
+    //-----------------------------------------
+
     if (
         !validateStateTransition(
             m_memory.currentState,
@@ -941,18 +1342,30 @@ void MotorController::transitionToState(
         return;
     }
 
+    //-----------------------------------------
+    // Previous state
+    //-----------------------------------------
+
     m_memory.previousState =
         m_memory.currentState;
 
+    //-----------------------------------------
+    // Current state
+    //-----------------------------------------
+
     m_memory.currentState =
         newState;
+
+    //-----------------------------------------
+    // Timestamp
+    //-----------------------------------------
 
     m_memory.lastStateTransitionTimestampMs =
         getCurrentTimestampMs();
 }
 
 //====================================================
-// State validation
+// State transition validation
 //====================================================
 
 bool MotorController::validateStateTransition(
@@ -966,7 +1379,8 @@ bool MotorController::validateStateTransition(
     if (
         currentState ==
             MotorState::Fault &&
-        newState != MotorState::Idle)
+        newState !=
+            MotorState::Idle)
     {
         return false;
     }
@@ -978,7 +1392,8 @@ bool MotorController::validateStateTransition(
     if (
         currentState ==
             MotorState::EmergencyStop &&
-        newState != MotorState::Idle)
+        newState !=
+            MotorState::Idle)
     {
         return false;
     }
@@ -994,27 +1409,68 @@ MotorState
 MotorController::determineMotorState(
     const MotionCommand &motionCommand) const
 {
-    if (motionCommand.emergencyStop)
+    //-----------------------------------------
+    // Emergency braking
+    //-----------------------------------------
+
+    if (
+        motionCommand.emergencyBrakingActive)
     {
         return MotorState::EmergencyStop;
     }
 
+    //-----------------------------------------
+    // Braking
+    //-----------------------------------------
+
+    if (
+        motionCommand.brakingActive)
+    {
+        return MotorState::Braking;
+    }
+
+    //-----------------------------------------
+    // Average wheel speed
+    //-----------------------------------------
+
     const float averageSpeed =
         (std::fabs(
-             motionCommand.leftWheelSpeedPercent) +
+             motionCommand.leftWheelSpeed) +
          std::fabs(
-             motionCommand.rightWheelSpeedPercent)) *
+             motionCommand.rightWheelSpeed)) *
         0.5f;
+
+    //-----------------------------------------
+    // Idle
+    //-----------------------------------------
 
     if (averageSpeed <= 0.01f)
     {
         return MotorState::Idle;
     }
 
+    //-----------------------------------------
+    // Reverse
+    //-----------------------------------------
+
+    if (
+        motionCommand.reverseMotionActive)
+    {
+        return MotorState::Reverse;
+    }
+
+    //-----------------------------------------
+    // Accelerating
+    //-----------------------------------------
+
     if (averageSpeed < 0.3f)
     {
         return MotorState::Accelerating;
     }
+
+    //-----------------------------------------
+    // Cruising
+    //-----------------------------------------
 
     return MotorState::Cruising;
 }
@@ -1026,18 +1482,43 @@ MotorController::determineMotorState(
 void MotorController::handleFault(
     const char *reason)
 {
-    ESP_LOGE(
-        TAG,
-        "Fault: %s",
-        reason);
+    //-----------------------------------------
+    // Already faulted
+    //-----------------------------------------
+
+    if (m_memory.faultActive)
+    {
+        return;
+    }
+
+    //-----------------------------------------
+    // Runtime fault state
+    //-----------------------------------------
 
     m_memory.faultActive =
         true;
 
+    //-----------------------------------------
+    // Runtime state
+    //-----------------------------------------
+
     transitionToState(
         MotorState::Fault);
 
+    //-----------------------------------------
+    // Emergency stop
+    //-----------------------------------------
+
     m_motorDriver.emergencyStop();
+
+    //-----------------------------------------
+    // Logging
+    //-----------------------------------------
+
+    ESP_LOGE(
+        TAG,
+        "MotorController fault: %s",
+        reason);
 }
 
 //====================================================
@@ -1047,11 +1528,20 @@ void MotorController::handleFault(
 bool MotorController::hasMotionTimedOut(
     uint32_t currentTimestampMs) const
 {
+    //-----------------------------------------
+    // No command received yet
+    //-----------------------------------------
+
     if (
-        m_memory.lastCommandTimestampMs == 0)
+        m_memory.lastCommandTimestampMs ==
+        0)
     {
         return false;
     }
+
+    //-----------------------------------------
+    // Timeout validation
+    //-----------------------------------------
 
     return (
         (
@@ -1076,12 +1566,12 @@ void MotorController::performRuntimeMonitoring(
     if (m_motorDriver.hasFault())
     {
         handleFault(
-            "Driver runtime fault");
+            "Runtime driver fault");
     }
 }
 
 //====================================================
-// Wheel runtime update
+// Update wheel runtime state
 //====================================================
 
 void MotorController::updateWheelState(
@@ -1089,27 +1579,59 @@ void MotorController::updateWheelState(
     const WheelCommand &wheelCommand,
     uint32_t currentTimestampMs)
 {
+    //-----------------------------------------
+    // Speed
+    //-----------------------------------------
+
     wheelState.currentSpeedPercent =
         wheelCommand.speedPercent;
+
+    //-----------------------------------------
+    // Target speed
+    //-----------------------------------------
 
     wheelState.targetSpeedPercent =
         wheelCommand.speedPercent;
 
+    //-----------------------------------------
+    // Direction
+    //-----------------------------------------
+
     wheelState.currentDirection =
         wheelCommand.direction;
 
+    //-----------------------------------------
+    // Brake state
+    //-----------------------------------------
+
     wheelState.currentBrakeMode =
         wheelCommand.brakeMode;
+
+    //-----------------------------------------
+    // Braking runtime
+    //-----------------------------------------
 
     wheelState.brakingActive =
         (wheelCommand.brakeMode !=
          BrakeMode::Coast);
 
+    //-----------------------------------------
+    // Emergency runtime
+    //-----------------------------------------
+
     wheelState.emergencyBrakeActive =
         wheelCommand.emergencyBrake;
 
+    //-----------------------------------------
+    // Enabled
+    //-----------------------------------------
+
     wheelState.enabled =
         wheelCommand.enabled;
+
+    //-----------------------------------------
+    // Timestamp
+    //-----------------------------------------
 
     wheelState.lastUpdateTimestampMs =
         currentTimestampMs;
@@ -1125,14 +1647,46 @@ void MotorController::updateRuntimeMemory(
 {
     (void)motionCommand;
 
+    //-----------------------------------------
+    // Timestamp
+    //-----------------------------------------
+
     m_memory.lastCommandTimestampMs =
         currentTimestampMs;
+
+    //-----------------------------------------
+    // Sequence ID
+    //-----------------------------------------
 
     m_memory.currentSequenceId =
         m_sequenceCounter;
 
+    //-----------------------------------------
+    // Runtime execution
+    //-----------------------------------------
+
     m_memory.motionExecutionActive =
         true;
+}
+
+//====================================================
+// Skip ultra-fast updates
+//====================================================
+
+bool MotorController::shouldSkipUpdate(uint32_t currentTimestampMs) const
+{
+    //-----------------------------------------
+    // Minimum update interval
+    //-----------------------------------------
+
+    constexpr uint32_t minimumUpdateIntervalMs =
+        2;
+
+    return (
+        (
+            currentTimestampMs -
+            m_memory.lastSynchronizationTimestampMs) <
+        minimumUpdateIntervalMs);
 }
 
 //====================================================
@@ -1142,5 +1696,5 @@ void MotorController::updateRuntimeMemory(
 uint32_t MotorController::getCurrentTimestampMs() const
 {
     return static_cast<uint32_t>(
-        esp_log_timestamp());
+        esp_timer_get_time() / 1000ULL);
 }

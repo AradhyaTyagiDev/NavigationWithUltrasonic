@@ -186,6 +186,10 @@ private:
 
     void emergencyStopInternal();
 
+    bool validateDriverHealth() const;
+
+    bool MotorController::shouldSkipUpdate(uint32_t currentTimestampMs) const;
+
 private:
     // Hardware abstraction layer
     IMotorDriver &m_motorDriver;
