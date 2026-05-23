@@ -40,13 +40,13 @@ UltrasonicSensor::~UltrasonicSensor()
     {
         vSemaphoreDelete(m_dataMutex);
     }
+
+    shutdown();
 }
 
 bool UltrasonicSensor::initialize()
 {
-    m_sensorQueue = xQueueCreate(
-        10,
-        sizeof(UltrasonicSensorData));
+    m_sensorQueue = xQueueCreate(m_config.queueSize, sizeof(UltrasonicSensorData));
 
     if (!m_sensorQueue)
     {
@@ -91,6 +91,61 @@ bool UltrasonicSensor::start()
         m_config.taskCore);
 
     return result == pdPASS;
+}
+
+// Shutdown
+void UltrasonicSensor::shutdown()
+{
+    // Stop sensor task
+    if (m_taskHandle != nullptr)
+    {
+        vTaskDelete(m_taskHandle);
+
+        m_taskHandle = nullptr;
+    }
+
+    // Disable RMT channel
+    if (m_rxChannel != nullptr)
+    {
+        rmt_disable(m_rxChannel);
+
+        rmt_del_channel(m_rxChannel);
+
+        m_rxChannel = nullptr;
+    }
+
+    // Reset trigger pin
+    gpio_set_level(
+        m_config.trigPin,
+        0);
+
+    // Delete queue
+    if (m_sensorQueue != nullptr)
+    {
+        vQueueDelete(
+            m_sensorQueue);
+
+        m_sensorQueue = nullptr;
+    }
+
+    // Delete mutex
+    if (m_dataMutex != nullptr)
+    {
+        vSemaphoreDelete(
+            m_dataMutex);
+
+        m_dataMutex = nullptr;
+    }
+
+    //-----------------------------------------
+
+    //-----------------------------------------
+    // Runtime flags
+    m_echoReceived = false;
+
+    ESP_LOGI(
+        TAG,
+        "Ultrasonic sensor shutdown complete");
 }
 
 bool UltrasonicSensor::configureGPIO()
@@ -248,7 +303,8 @@ void UltrasonicSensor::processEchoData(
     BaseType_t higherPriorityTaskWoken =
         pdFALSE;
 
-    xQueueSendFromISR(
+    // always keep newest frame. xQueueSendFromISR keeps older frames
+    xQueueOverwriteFromISR(
         m_sensorQueue,
         &data,
         &higherPriorityTaskWoken);
@@ -292,19 +348,21 @@ QueueHandle_t UltrasonicSensor::getQueueHandle() const
     return m_sensorQueue;
 }
 
-bool UltrasonicSensor::getLatestData(
-    UltrasonicSensorData &outData)
+//====================================================
+// Fetch latest sensor data
+//====================================================
+bool UltrasonicSensor::fetchLatestData(UltrasonicSensorData &outData)
 {
-    if (xSemaphoreTake(
-            m_dataMutex,
-            pdMS_TO_TICKS(5)) == pdTRUE)
+    // Queue valid
+    if (m_sensorQueue == nullptr)
     {
-        outData = m_latestData;
-
-        xSemaphoreGive(m_dataMutex);
-
-        return true;
+        return false;
     }
 
-    return false;
+    // Read latest frame
+    return (
+        xQueueReceive(
+            m_sensorQueue,
+            &outData,
+            0) == pdTRUE);
 }

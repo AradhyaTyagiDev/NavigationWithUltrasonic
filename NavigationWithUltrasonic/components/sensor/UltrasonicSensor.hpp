@@ -23,13 +23,25 @@ public:
 
         uint32_t taskStackSize = 4096;
 
-        UBaseType_t taskPriority = 4;
+        UBaseType_t taskPriority = 6;
 
         // Core 0 reserved for I/O
         BaseType_t taskCore = 0;
 
         // 20Hz = every 50ms
         uint32_t sensorFrequencyHz = 20;
+
+        // Recommended: 1, Latest-frame semantics
+        uint32_t queueSize = 1;
+
+        // Startup stabilization delay
+        uint32_t startupDelayMs = 100;
+
+        // Maximum consecutive timeouts
+        uint32_t maximumConsecutiveTimeouts = 5;
+
+        // Runtime enabled
+        bool enabled = true;
     };
 
 public:
@@ -41,7 +53,9 @@ public:
 
     bool start();
 
-    bool getLatestData(UltrasonicSensorData &outData);
+    void shutdown();
+
+    bool fetchLatestData(UltrasonicSensorData &outData);
 
     QueueHandle_t getQueueHandle() const;
 

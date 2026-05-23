@@ -6,7 +6,7 @@
 
 #include <stdint.h>
 
-#include "NavigationDecision.hpp"
+#include "../navigation/NavigationDecision.hpp"
 
 #include "MotionCommand.hpp"
 #include "MotionMemory.hpp"

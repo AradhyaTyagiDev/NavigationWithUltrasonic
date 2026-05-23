@@ -9,5 +9,6 @@ idf_component_register(
         "."
 
     REQUIRES
+        navigation
 
 )

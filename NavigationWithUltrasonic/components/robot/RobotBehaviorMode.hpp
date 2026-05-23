@@ -1,4 +1,27 @@
+//====================================================
+// File: RobotBehaviorMode.hpp
+//====================================================
 
+#pragma once
+
+//====================================================
+// RobotBehaviorMode
+//====================================================
+//
+// High-level robot behavioral personality.
+//
+// Controls:
+//      navigation aggressiveness
+//      safety sensitivity
+//      locomotion confidence
+//      obstacle tolerance
+//
+// Used by:
+//      RobotController
+//      NavigationManager
+//      MotionPlanner
+//
+//====================================================
 /*
 Conservative Mode
     - larger danger distances
@@ -14,7 +37,14 @@ Aggressive Mode
 */
 enum class RobotBehaviorMode
 {
+    // Maximum safety
     Conservative,
+    // Balanced production behavior
     Balanced,
-    Aggressive
+    // Faster movement: More aggressive avoidance
+    Aggressive,
+    // Reduced movement: Sensor degradation mode
+    SafeMode,
+    // Experimental exploration behavior
+    Exploration
 };
