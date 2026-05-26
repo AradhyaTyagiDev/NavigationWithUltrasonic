@@ -10,9 +10,10 @@
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
 
+#include "IUltrasonicSensor.hpp"
 #include "UltrasonicTypes.hpp"
 
-class UltrasonicSensor
+class UltrasonicSensor final : public IUltrasonicSensor
 {
 public:
     struct Config

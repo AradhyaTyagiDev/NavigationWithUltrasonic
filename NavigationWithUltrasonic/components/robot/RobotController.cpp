@@ -15,7 +15,7 @@ static const char *TAG =
 //====================================================
 
 RobotController::RobotController(
-    UltrasonicSensor &ultrasonicSensor,
+    IUltrasonicSensor &ultrasonicSensor,
     UltrasonicFilter &ultrasonicFilter,
     ObstacleManager &obstacleManager,
     NavigationManager &navigationManager,

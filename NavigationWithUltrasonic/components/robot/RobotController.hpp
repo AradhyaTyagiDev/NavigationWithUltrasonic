@@ -10,7 +10,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
-#include "../sensor/UltrasonicSensor.hpp"
+#include "../sensor/IUltrasonicSensor.hpp"
 #include "../filter/UltrasonicFilter.hpp"
 #include "../obstacle/ObstacleAnalysis.hpp"
 #include "../obstacle/ObstacleManager.hpp"
@@ -79,7 +79,7 @@ class RobotController final
 {
 public:
     RobotController(
-        UltrasonicSensor &ultrasonicSensor,
+        IUltrasonicSensor &ultrasonicSensor,
         UltrasonicFilter &ultrasonicFilter,
         ObstacleManager &obstacleManager,
         NavigationManager &navigationManager,
@@ -306,7 +306,7 @@ private:
 
 private:
     // Sensor layer
-    UltrasonicSensor &m_ultrasonicSensor;
+    IUltrasonicSensor &m_ultrasonicSensor;
 
     // Filter layer
     UltrasonicFilter &m_ultrasonicFilter;

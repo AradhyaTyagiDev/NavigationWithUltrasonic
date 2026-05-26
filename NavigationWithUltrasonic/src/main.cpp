@@ -1,53 +1,53 @@
 #include <stdio.h>
 
-#include "UltrasonicSensor.hpp"
+#include "IUltrasonicSensor.hpp"
 
 extern "C" void app_main()
 {
-    UltrasonicSensor::Config config;
+    //     IUltrasonicSensor::Config config;
 
-    config.trigPin = GPIO_NUM_25;
+    //     config.trigPin = GPIO_NUM_25;
 
-    config.echoPin = GPIO_NUM_32;
+    //     config.echoPin = GPIO_NUM_32;
 
-    config.taskPriority = 3;
+    //     config.taskPriority = 3;
 
-    config.taskCore = 0;
+    //     config.taskCore = 0;
 
-    /// 20 measurements/sec
-    config.sensorFrequencyHz = 20;
+    //     /// 20 measurements/sec
+    //     config.sensorFrequencyHz = 20;
 
-    static UltrasonicSensor ultrasonic(config);
+    //     static IUltrasonicSensor ultrasonic(config);
 
-    if (!ultrasonic.initialize())
-    {
-        printf("Ultrasonic init failed\n");
+    //     if (!ultrasonic.initialize())
+    //     {
+    //         printf("Ultrasonic init failed\n");
 
-        return;
-    }
+    //         return;
+    //     }
 
-    if (!ultrasonic.start())
-    {
-        printf("Ultrasonic start failed\n");
+    //     if (!ultrasonic.start())
+    //     {
+    //         printf("Ultrasonic start failed\n");
 
-        return;
-    }
+    //         return;
+    //     }
 
-    UltrasonicSensorData data;
+    //     UltrasonicSensorData data;
 
-    while (true)
-    {
-        if (xQueueReceive(
-                ultrasonic.getQueueHandle(),
-                &data,
-                pdMS_TO_TICKS(100)) == pdTRUE)
-        {
-            float distanceCm =
-                static_cast<float>(data.pulseWidthUs) / 58.0f;
+    //     while (true)
+    //     {
+    //         if (xQueueReceive(
+    //                 ultrasonic.getQueueHandle(),
+    //                 &data,
+    //                 pdMS_TO_TICKS(100)) == pdTRUE)
+    //         {
+    //             float distanceCm =
+    //                 static_cast<float>(data.pulseWidthUs) / 58.0f;
 
-            printf(
-                "Distance: %.2f cm\n",
-                distanceCm);
-        }
-    }
+    //             printf(
+    //                 "Distance: %.2f cm\n",
+    //                 distanceCm);
+    //         }
+    //     }
 }
