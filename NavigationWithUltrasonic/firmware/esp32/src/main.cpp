@@ -1,6 +1,7 @@
 #include <stdio.h>
 
 #include "sensor/ultrasonic/UltrasonicSensor.hpp"
+#include "filter/include/FilteredSensorData.hpp"
 
 extern "C" void app_main()
 {

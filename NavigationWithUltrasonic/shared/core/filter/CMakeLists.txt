@@ -1,12 +1,10 @@
-idf_component_register(
-    SRCS
-        "UltrasonicFilter.cpp"
+#Create library "filter" using UltrasonicFilter.cpp
+add_library(filter
+    src/UltrasonicFilter.cpp
+)
 
-    INCLUDE_DIRS
-        "."
-
-    REQUIRES
-        driver
-        freertos
-        esp_timer
+#Also allow compiler to search headers inside include folder.
+target_include_directories(filter
+    PUBLIC
+        include
 )

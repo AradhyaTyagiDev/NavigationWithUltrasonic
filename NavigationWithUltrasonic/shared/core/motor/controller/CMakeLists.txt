@@ -1,10 +1,15 @@
-idf_component_register(
-    SRCS
-        "MotorController.cpp"
+#Create library "motor_controller" using MotorController.cpp
+add_library(motor_controller
+    src/MotorController.cpp
+)
 
-    INCLUDE_DIRS
-        "."
+#Also allow compiler to search headers inside include folder.
+target_include_directories(motor_controller
+    PUBLIC
+        include
+)
 
-    REQUIRES
-        obstacle
+target_link_libraries(motor_controller
+    PUBLIC
+        motion        
 )

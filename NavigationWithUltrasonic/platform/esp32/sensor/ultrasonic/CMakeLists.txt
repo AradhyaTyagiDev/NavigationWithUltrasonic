@@ -1,11 +1,16 @@
-idf_component_register(
-    SRCS
-        "UltrasonicSensor.cpp"
+#Create library "sensor" using UltrasonicSensor.cpp
+add_library(sensor
+    src/UltrasonicSensor.cpp
+)
 
-    INCLUDE_DIRS
-        "."
+#Also allow compiler to search headers inside include folder.
+target_include_directories(sensor
+    PUBLIC
+        include
+)
 
-    REQUIRES
+target_link_libraries(sensor
+    PUBLIC
         driver
         freertos
         esp_timer
