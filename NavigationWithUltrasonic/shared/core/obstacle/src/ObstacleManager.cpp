@@ -8,6 +8,35 @@
 
 uint32_t blockedDetectionFrames = 20;
 
+namespace
+{
+    int dangerSeverity(
+        DangerLevel level)
+    {
+        switch (level)
+        {
+        case DangerLevel::Safe:
+            return 0;
+
+        case DangerLevel::Caution:
+            return 1;
+
+        case DangerLevel::Avoid:
+            return 2;
+
+        case DangerLevel::Emergency:
+            return 3;
+
+        case DangerLevel::Blocked:
+            return 4;
+
+        case DangerLevel::Unknown:
+        default:
+            return -1;
+        }
+    }
+}
+
 //====================================================
 // Constructor
 //====================================================
@@ -207,6 +236,13 @@ ObstacleManager::applyHysteresis(
     DangerLevel newLevel,
     float distanceCm) const
 {
+    if (
+        dangerSeverity(newLevel) >
+        dangerSeverity(m_currentDangerLevel))
+    {
+        return newLevel;
+    }
+
     switch (m_currentDangerLevel)
     {
         //-----------------------------------------

@@ -1,0 +1,309 @@
+        -:    0:Source:lib/shared/core/filter/src/UltrasonicFilter.cpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-UltrasonicFilter.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-UltrasonicFilter.gcda
+        -:    0:Runs:1
+        -:    1:#include "filter/include/FilteredSensorData.hpp"
+        -:    2:#include "filter/include/UltrasonicFilterConfig.hpp"
+        -:    3:#include "filter/include/UltrasonicFilter.hpp"
+        -:    4:
+        -:    5:#include <cmath>
+        -:    6:
+        -:    7:static constexpr float SOUND_DIVIDER = 58.0f;
+        -:    8:
+       90:    9:UltrasonicFilter::UltrasonicFilter(
+        -:   10:    const UltrasonicFilterConfig &config)
+       45:   11:    : m_config(config)
+       45:   12:{
+       45:   13:    m_filteredDistance = config.timeoutDistanceCm;
+       45:   14:    m_lastDistance = config.timeoutDistanceCm;
+       90:   15:}
+        -:   16:
+      169:   17:FilteredSensorData UltrasonicFilter::process(
+        -:   18:    uint32_t pulseWidthUs,
+        -:   19:    uint32_t timestampMs)
+        -:   20:{
+      169:   21:    FilteredSensorData result;
+        -:   22:
+      169:   23:    result.timestampMs = timestampMs;
+        -:   24:
+        -:   25:    //-----------------------------------------
+        -:   26:    // RAW → DISTANCE
+        -:   27:    //-----------------------------------------
+        -:   28:
+      169:   29:    float rawDistance = pulseToDistance(
+      169:   30:        pulseWidthUs);
+        -:   31:
+      169:   32:    result.rawDistanceCm = rawDistance;
+        -:   33:
+        -:   34:    //-----------------------------------------
+        -:   35:    // VALIDITY CHECK
+        -:   36:    //-----------------------------------------
+      169:   37:    bool validMeasurement = true;
+        -:   38:
+      169:   39:    if (!isValidDistance(rawDistance))
+        -:   40:    {
+        5:   41:        validMeasurement = false;
+        -:   42:
+        -:   43:        // Invalid measurement / timeout
+        5:   44:        m_consecutiveTimeouts++;
+        -:   45:
+        5:   46:        result.timeoutOccurred = true;
+        -:   47:
+        5:   48:        result.consecutiveTimeouts = m_consecutiveTimeouts;
+        -:   49:
+        5:   50:        result.confidence = 0.0f;
+        -:   51:
+        5:   52:        rawDistance = m_config.timeoutDistanceCm;
+        5:   53:    }
+        -:   54:    else
+        -:   55:    {
+        -:   56:        // Valid measurement
+      164:   57:        m_consecutiveTimeouts = 0;
+        -:   58:
+      164:   59:        result.timeoutOccurred = false;
+        -:   60:
+      164:   61:        result.consecutiveTimeouts = 0;
+        -:   62:    }
+        -:   63:
+        -:   64:    //-----------------------------------------
+        -:   65:    // CONFIDENCE SCORE
+        -:   66:    //-----------------------------------------
+      169:   67:    float instantConfidence = 0.0f;
+        -:   68:
+      169:   69:    if (validMeasurement)
+        -:   70:    {
+        -:   71:        // This evaluates: current jump, current validity, current anomaly
+      164:   72:        instantConfidence = calculateConfidence(rawDistance);
+      164:   73:    }
+        -:   74:
+        -:   75:    /// smooth confidence evolution, long-term trust memory
+      169:   76:    result.confidence = applyConfidenceDecay(instantConfidence);
+        -:   77:
+        -:   78:    //-----------------------------------------
+        -:   79:    // OUTLIER REJECTION
+        -:   80:    //-----------------------------------------
+        -:   81:
+      169:   82:    if (isOutlier(rawDistance))
+        -:   83:    {
+        -:   84:        // Outlier rejection should affect confidence but not completely discard the measurement, as it might be a real sudden change (e.g., fast obstacle)
+       13:   85:        result.confidence *= 0.5f;
+        -:   86:
+       13:   87:        rawDistance = m_lastDistance;
+       13:   88:    }
+        -:   89:
+        -:   90:    //-----------------------------------------
+        -:   91:    // DEAD ZONE FILTER
+        -:   92:    //-----------------------------------------
+        -:   93:
+      169:   94:    rawDistance = applyDeadZone(
+      169:   95:        rawDistance);
+        -:   96:
+        -:   97:    //-----------------------------------------
+        -:   98:    // ADOPTIVE EMA FILTER
+        -:   99:    //-----------------------------------------
+        -:  100:
+      169:  101:    float filteredDistance = applyAdaptiveEMA(
+      169:  102:        rawDistance);
+        -:  103:
+        -:  104:    //-----------------------------------------
+        -:  105:    // VELOCITY
+        -:  106:    //-----------------------------------------
+      169:  107:    result.velocityCmPerSec = calculateVelocity(
+      169:  108:        filteredDistance,
+      169:  109:        timestampMs);
+        -:  110:
+      169:  111:    if (fabs(result.velocityCmPerSec) > m_config.maxRealisticVelocityCmPerSec)
+        -:  112:    {
+        -:  113:        // Unrealistic jump detected
+        3:  114:        result.confidence *= 0.2f;
+        -:  115:
+        3:  116:        result.velocityCmPerSec = 0.0f;
+        -:  117:
+        3:  118:        m_filteredDistance = m_lastDistance;
+        3:  119:        filteredDistance = m_lastDistance;
+        3:  120:    }
+        -:  121:
+        -:  122:    // STABILITY WINDOW
+      169:  123:    result.isStable = updateStability(filteredDistance) && result.confidence > 0.5f;
+        -:  124:
+        -:  125:    // FINAL OBSTACLE STATE
+      169:  126:    result.obstacleDetected =
+      169:  127:        result.isStable &&
+        5:  128:        filteredDistance < m_config.obstacleThresholdCm;
+        -:  129:
+      169:  130:    result.filteredDistanceCm = filteredDistance;
+        -:  131:
+      169:  132:    m_lastDistance = filteredDistance;
+        -:  133:
+      169:  134:    return result;
+        -:  135:}
+        -:  136:
+      169:  137:float UltrasonicFilter::pulseToDistance(
+        -:  138:    uint32_t pulseWidthUs)
+        -:  139:{
+      169:  140:    return static_cast<float>(pulseWidthUs) / SOUND_DIVIDER;
+        -:  141:}
+        -:  142:
+      169:  143:bool UltrasonicFilter::isValidDistance(
+        -:  144:    float distanceCm)
+        -:  145:{
+      333:  146:    return distanceCm >= m_config.minDistanceCm &&
+      164:  147:           distanceCm <= m_config.maxDistanceCm;
+        -:  148:}
+        -:  149:
+      164:  150:float UltrasonicFilter::calculateConfidence(
+        -:  151:    float newDistance)
+        -:  152:{
+      164:  153:    float delta = fabs(newDistance - m_lastDistance);
+        -:  154:
+      164:  155:    if (newDistance <= 0 ||
+      164:  156:        newDistance > m_config.maxDistanceCm)
+        -:  157:    {
+    #####:  158:        return 0.0f;
+        -:  159:    }
+        -:  160:
+      164:  161:    if (delta < m_config.smallJumpThresholdCm)
+        -:  162:    {
+      111:  163:        return 1.0f;
+        -:  164:    }
+        -:  165:
+       53:  166:    if (delta < m_config.largeJumpThresholdCm)
+        -:  167:    {
+       40:  168:        return 0.8f;
+        -:  169:    }
+        -:  170:
+       13:  171:    return 0.2f;
+      164:  172:}
+        -:  173:
+        -:  174://-----------------------------------------
+        -:  175:// Confidence smoothing factor
+        -:  176://-----------------------------------------
+        -:  177://
+        -:  178:// Lower value:
+        -:  179://     smoother confidence
+        -:  180://
+        -:  181:// Higher value:
+        -:  182://     faster confidence reaction
+        -:  183://-----------------------------------------
+      169:  184:float UltrasonicFilter::applyConfidenceDecay(
+        -:  185:    float newConfidence)
+        -:  186:{
+        -:  187:    // EMA-based confidence decay
+      169:  188:    m_persistentConfidence =
+      338:  189:        (m_config.confidenceDecayAlpha * newConfidence) +
+      169:  190:        ((1.0f - m_config.confidenceDecayAlpha) * m_persistentConfidence);
+        -:  191:
+        -:  192:    // Clamp safety
+      169:  193:    if (m_persistentConfidence < 0.0f)
+        -:  194:    {
+    #####:  195:        m_persistentConfidence = 0.0f;
+    #####:  196:    }
+        -:  197:
+      169:  198:    if (m_persistentConfidence > 1.0f)
+        -:  199:    {
+    #####:  200:        m_persistentConfidence = 1.0f;
+    #####:  201:    }
+        -:  202:
+      169:  203:    return m_persistentConfidence;
+        -:  204:}
+        -:  205:
+      169:  206:bool UltrasonicFilter::isOutlier(
+        -:  207:    float newDistance)
+        -:  208:{
+      169:  209:    float delta = fabs(newDistance - m_lastDistance);
+        -:  210:
+      169:  211:    return delta > m_config.largeJumpThresholdCm;
+        -:  212:}
+        -:  213:
+      169:  214:float UltrasonicFilter::applyDeadZone(
+        -:  215:    float newDistance)
+        -:  216:{
+      169:  217:    if (fabs(newDistance - m_lastDistance) < m_config.deadZoneCm)
+        -:  218:    {
+       16:  219:        return m_lastDistance;
+        -:  220:    }
+        -:  221:
+      153:  222:    return newDistance;
+      169:  223:}
+        -:  224:
+      169:  225:float UltrasonicFilter::applyAdaptiveEMA(
+        -:  226:    float newDistance)
+        -:  227:{
+        -:  228:    // Distance change magnitude
+      169:  229:    float delta =
+      169:  230:        fabs(newDistance - m_filteredDistance);
+        -:  231:
+        -:  232:    // Dynamic alpha calculation
+      169:  233:    float alpha = 0.0f;
+        -:  234:
+        -:  235:    // Very stable region
+      169:  236:    if (delta < m_config.adaptiveEMAStableDeltaCm)
+        -:  237:    {
+      121:  238:        alpha = 0.20f;
+      121:  239:    }
+       48:  240:    else if (delta < m_config.adaptiveEMAModerateDeltaCm)
+        -:  241:    {
+        -:  242:        // Moderate movement
+       11:  243:        alpha = 0.50f;
+       11:  244:    }
+        -:  245:    else
+        -:  246:    {
+        -:  247:        // Fast obstacle / rapid change
+       37:  248:        alpha = 0.80f;
+        -:  249:    }
+        -:  250:
+        -:  251:    // EMA update
+      169:  252:    m_filteredDistance =
+      338:  253:        (alpha * newDistance) +
+      169:  254:        ((1.0f - alpha) * m_filteredDistance);
+        -:  255:
+      169:  256:    return m_filteredDistance;
+        -:  257:}
+        -:  258:
+      169:  259:float UltrasonicFilter::calculateVelocity(
+        -:  260:    float currentDistance,
+        -:  261:    uint32_t currentTimestamp)
+        -:  262:{
+      169:  263:    if (m_lastTimestamp == 0)
+        -:  264:    {
+       29:  265:        m_lastTimestamp = currentTimestamp;
+        -:  266:
+       29:  267:        return 0.0f;
+        -:  268:    }
+        -:  269:
+      140:  270:    float deltaDistance =
+      140:  271:        currentDistance - m_lastDistance;
+        -:  272:
+      140:  273:    float deltaTimeSec =
+        -:  274:        static_cast<float>(
+      140:  275:            currentTimestamp - m_lastTimestamp) /
+        -:  276:        1000.0f;
+        -:  277:
+      140:  278:    if (deltaTimeSec <= 0.0f)
+        -:  279:    {
+    #####:  280:        return 0.0f;
+        -:  281:    }
+        -:  282:
+      140:  283:    m_lastTimestamp = currentTimestamp;
+        -:  284:
+      140:  285:    m_lastVelocity =
+      140:  286:        deltaDistance / deltaTimeSec;
+        -:  287:
+      140:  288:    return m_lastVelocity;
+      169:  289:}
+        -:  290:
+      169:  291:bool UltrasonicFilter::updateStability(
+        -:  292:    float filteredDistance)
+        -:  293:{
+      169:  294:    if (filteredDistance < m_config.obstacleThresholdCm)
+        -:  295:    {
+        6:  296:        m_stableCounter++;
+        6:  297:    }
+        -:  298:    else
+        -:  299:    {
+      163:  300:        m_stableCounter = 0;
+        -:  301:    }
+        -:  302:
+      338:  303:    return m_stableCounter >=
+      169:  304:           m_config.requiredStableFrames;
+        -:  305:}

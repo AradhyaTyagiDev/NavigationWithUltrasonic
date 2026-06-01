@@ -4,9 +4,7 @@
 
 #pragma once
 
-#include "motor/controller/"
-
-#include "../MotorDriverTypes.hpp"
+#include "interfaces/include/motor/driver/MotorDriverTypes.hpp"
 
 #include <stdint.h>
 

@@ -2,13 +2,12 @@
 // File: MotorController.cpp
 //====================================================
 
-#include "MotorController.hpp"
+#include "motor/controller/include/MotorController.hpp"
+#include "interfaces/include/synchronization/LockGuard.hpp"
+#include "interfaces/include/logging/LoggerExtensions.hpp"
 
 #include <algorithm>
 #include <cmath>
-
-#include "esp_log.h"
-#include "esp_timer.h"
 
 static const char *TAG = "MotorController";
 
@@ -18,9 +17,11 @@ static const char *TAG = "MotorController";
 
 MotorController::MotorController(
     IMotorDriver &motorDriver,
+    IMutex &mutex,
+    ILogger &logger,
+    ITimer &timer,
     const MotorControllerConfig &config)
-    : m_motorDriver(motorDriver),
-      m_config(config)
+    : m_motorDriver(motorDriver), m_mutex(mutex), m_logger(logger), m_timer(timer), m_config(config)
 {
 }
 
@@ -30,7 +31,7 @@ MotorController::MotorController(
 
 bool MotorController::initialize()
 {
-    ScopedControllerLock lock(this);
+    LockGuard guard(m_mutex);
 
     //-----------------------------------------
     // Driver initialization
@@ -38,7 +39,8 @@ bool MotorController::initialize()
 
     if (!m_motorDriver.initialize())
     {
-        ESP_LOGE(
+        Logger::info(
+            m_logger,
             TAG,
             "Motor driver initialization failed");
 
@@ -58,7 +60,8 @@ bool MotorController::initialize()
     transitionToState(
         MotorState::Idle);
 
-    ESP_LOGI(
+    Logger::info(
+        m_logger,
         TAG,
         "MotorController initialized");
 
@@ -71,7 +74,7 @@ bool MotorController::initialize()
 
 void MotorController::shutdown()
 {
-    ScopedControllerLock lock(this);
+    LockGuard guard(m_mutex);
 
     //-----------------------------------------
     // Stop locomotion
@@ -92,7 +95,8 @@ void MotorController::shutdown()
     transitionToState(
         MotorState::Idle);
 
-    ESP_LOGI(
+    Logger::info(
+        m_logger,
         TAG,
         "MotorController shutdown");
 }
@@ -104,10 +108,26 @@ void MotorController::shutdown()
 void MotorController::executeMotion(
     const MotionCommand &motionCommand)
 {
-    ScopedControllerLock lock(this);
+    LockGuard guard(m_mutex);
 
     executeMotionInternal(
         motionCommand);
+}
+
+bool MotorController::tryExecuteMotion(
+    const MotionCommand &motionCommand)
+{
+    if (!m_mutex.tryLock())
+    {
+        return false;
+    }
+
+    executeMotionInternal(
+        motionCommand);
+
+    m_mutex.unlock();
+
+    return true;
 }
 
 //====================================================
@@ -123,7 +143,8 @@ void MotorController::executeMotionInternal(
 
     if (m_memory.emergencyStopActive)
     {
-        ESP_LOGW(
+        Logger::warning(
+            m_logger,
             TAG,
             "Ignoring motion during emergency");
 
@@ -172,8 +193,7 @@ void MotorController::executeMotionInternal(
     // Runtime timestamp
     //-----------------------------------------
 
-    const uint32_t currentTimestampMs =
-        getCurrentTimestampMs();
+    const uint32_t currentTimestampMs = Timer::milliseconds(m_timer);
 
     //-----------------------------------------
     // Wheel commands
@@ -282,15 +302,13 @@ void MotorController::executeMotionInternal(
         generateMotorDriverCommand(
             MotorChannel::Left,
             leftWheelCommand,
-            sequenceId,
-            currentTimestampMs);
+            sequenceId);
 
     MotorDriverCommand rightDriverCommand =
         generateMotorDriverCommand(
             MotorChannel::Right,
             rightWheelCommand,
-            sequenceId,
-            currentTimestampMs);
+            sequenceId);
 
     //-----------------------------------------
     // Execute wheel commands
@@ -347,7 +365,7 @@ void MotorController::executeMotionInternal(
 void MotorController::update(
     uint32_t currentTimestampMs)
 {
-    ScopedControllerLock lock(this);
+    LockGuard guard(m_mutex);
 
     //-----------------------------------------
     // Skip ultra-fast updates
@@ -366,7 +384,8 @@ void MotorController::update(
         hasMotionTimedOut(
             currentTimestampMs))
     {
-        ESP_LOGW(
+        Logger::warning(
+            m_logger,
             TAG,
             "Motion timeout detected");
 
@@ -386,6 +405,9 @@ void MotorController::update(
 
     m_motorDriver.update(
         currentTimestampMs);
+
+    m_memory.lastSynchronizationTimestampMs =
+        currentTimestampMs;
 }
 
 //====================================================
@@ -394,7 +416,7 @@ void MotorController::update(
 
 void MotorController::emergencyStop()
 {
-    ScopedControllerLock lock(this);
+    LockGuard guard(m_mutex);
 
     emergencyStopInternal();
 }
@@ -421,8 +443,7 @@ void MotorController::emergencyStopInternal()
     m_memory.emergencyStopActive =
         true;
 
-    m_memory.lastEmergencyTimestampMs =
-        getCurrentTimestampMs();
+    m_memory.lastEmergencyTimestampMs = Timer::milliseconds(m_timer);
 
     //-----------------------------------------
     // Driver emergency stop
@@ -437,7 +458,8 @@ void MotorController::emergencyStopInternal()
     transitionToState(
         MotorState::EmergencyStop);
 
-    ESP_LOGE(
+    Logger::info(
+        m_logger,
         TAG,
         "Emergency stop activated");
 }
@@ -448,7 +470,7 @@ void MotorController::emergencyStopInternal()
 
 void MotorController::clearEmergencyStop()
 {
-    ScopedControllerLock lock(this);
+    LockGuard guard(m_mutex);
 
     //-----------------------------------------
     // Driver clear
@@ -470,7 +492,8 @@ void MotorController::clearEmergencyStop()
     transitionToState(
         MotorState::Idle);
 
-    ESP_LOGI(
+    Logger::info(
+        m_logger,
         TAG,
         "Emergency stop cleared");
 }
@@ -481,7 +504,7 @@ void MotorController::clearEmergencyStop()
 
 void MotorController::stop()
 {
-    ScopedControllerLock lock(this);
+    LockGuard guard(m_mutex);
 
     stopInternal();
 }
@@ -519,7 +542,7 @@ void MotorController::stopInternal()
 
 void MotorController::reset()
 {
-    ScopedControllerLock lock(this);
+    LockGuard guard(m_mutex);
 
     //-----------------------------------------
     // Stop locomotion
@@ -552,7 +575,8 @@ void MotorController::reset()
     transitionToState(
         MotorState::Idle);
 
-    ESP_LOGI(
+    Logger::info(
+        m_logger,
         TAG,
         "MotorController reset");
 }
@@ -570,8 +594,7 @@ MotorState MotorController::getCurrentState() const
 // Runtime memory
 //====================================================
 
-const MotorControllerMemory &
-MotorController::getMemory() const
+MotorControllerMemory MotorController::getMemory() const
 {
     return m_memory;
 }
@@ -772,8 +795,7 @@ MotorController::generateLeftWheelCommand(
     // Runtime timestamp
     //-----------------------------------------
 
-    command.timestampMs =
-        getCurrentTimestampMs();
+    command.timestampMs = Timer::milliseconds(m_timer);
 
     return command;
 }
@@ -838,8 +860,7 @@ MotorController::generateRightWheelCommand(
     // Runtime timestamp
     //-----------------------------------------
 
-    command.timestampMs =
-        getCurrentTimestampMs();
+    command.timestampMs = Timer::milliseconds(m_timer);
 
     return command;
 }
@@ -1242,66 +1263,17 @@ MotorDriverCommand
 MotorController::generateMotorDriverCommand(
     MotorChannel channel,
     const WheelCommand &wheelCommand,
-    uint32_t sequenceId,
-    uint32_t timestampMs) const
+    uint32_t sequenceId) const
 {
     MotorDriverCommand command;
 
-    //-----------------------------------------
-    // Channel
-    //-----------------------------------------
-
-    command.channel =
-        channel;
-
-    //-----------------------------------------
-    // Direction
-    //-----------------------------------------
-
-    command.direction =
-        wheelCommand.direction;
-
-    //-----------------------------------------
-    // PWM percentage
-    //-----------------------------------------
-
-    command.pwmPercent =
-        wheelCommand.speedPercent;
-
-    //-----------------------------------------
-    // Brake mode
-    //-----------------------------------------
-
-    command.brakeMode =
-        wheelCommand.brakeMode;
-
-    //-----------------------------------------
-    // Enable
-    //-----------------------------------------
-
-    command.enabled =
-        wheelCommand.enabled;
-
-    //-----------------------------------------
-    // Emergency stop
-    //-----------------------------------------
-
-    command.emergencyStop =
-        wheelCommand.emergencyBrake;
-
-    //-----------------------------------------
-    // Sequence ID
-    //-----------------------------------------
-
-    command.sequenceId =
-        sequenceId;
-
-    //-----------------------------------------
-    // Timestamp
-    //-----------------------------------------
-
-    command.timestampMs =
-        timestampMs;
+    command.channel = channel;
+    command.direction = wheelCommand.direction;
+    command.brakeMode = wheelCommand.brakeMode;
+    command.normalizedSpeed = wheelCommand.speedPercent;
+    command.enabled = wheelCommand.enabled;
+    command.emergencyStop = wheelCommand.emergencyBrake;
+    command.sequenceId = sequenceId;
 
     return command;
 }
@@ -1360,8 +1332,7 @@ void MotorController::transitionToState(
     // Timestamp
     //-----------------------------------------
 
-    m_memory.lastStateTransitionTimestampMs =
-        getCurrentTimestampMs();
+    m_memory.lastStateTransitionTimestampMs = Timer::milliseconds(m_timer);
 }
 
 //====================================================
@@ -1515,7 +1486,8 @@ void MotorController::handleFault(
     // Logging
     //-----------------------------------------
 
-    ESP_LOGE(
+    Logger::error(
+        m_logger,
         TAG,
         "MotorController fault: %s",
         reason);
@@ -1687,14 +1659,4 @@ bool MotorController::shouldSkipUpdate(uint32_t currentTimestampMs) const
             currentTimestampMs -
             m_memory.lastSynchronizationTimestampMs) <
         minimumUpdateIntervalMs);
-}
-
-//====================================================
-// Timestamp utility
-//====================================================
-
-uint32_t MotorController::getCurrentTimestampMs() const
-{
-    return static_cast<uint32_t>(
-        esp_timer_get_time() / 1000ULL);
 }

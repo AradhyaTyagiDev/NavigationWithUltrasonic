@@ -1,0 +1,76 @@
+        -:    0:Source:lib/shared/core/robot/include/RuntimeStatistics.hpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcda
+        -:    0:Runs:1
+        -:    1://====================================================
+        -:    2:// File: RuntimeStatistics.hpp
+        -:    3://====================================================
+        -:    4:
+        -:    5:#pragma once
+        -:    6:
+        -:    7:#include <stdint.h>
+        -:    8:
+        -:    9://====================================================
+        -:   10:// RuntimeStatistics
+        -:   11://====================================================
+        -:   12://
+        -:   13:// Runtime execution statistics.
+        -:   14://
+        -:   15:// Used for:
+        -:   16://      diagnostics
+        -:   17://      telemetry
+        -:   18://      performance monitoring
+        -:   19://      runtime analysis
+        -:   20://
+        -:   21://====================================================
+        -:   22:
+       36:   23:struct RuntimeStatistics
+        -:   24:{
+        -:   25:    // Total control loop executions
+       36:   26:    uint64_t totalControlLoops = 0;
+        -:   27:
+        -:   28:    // Successful control loops
+       36:   29:    uint64_t successfulControlLoops = 0;
+        -:   30:
+        -:   31:    // Failed control loops
+       36:   32:    uint64_t failedControlLoops = 0;
+        -:   33:
+        -:   34:    // Total sensor updates
+       36:   35:    uint64_t sensorUpdates = 0;
+        -:   36:
+        -:   37:    // Total obstacle analyses
+       36:   38:    uint64_t obstacleAnalyses = 0;
+        -:   39:
+        -:   40:    // Total navigation decisions
+       36:   41:    uint64_t navigationDecisions = 0;
+        -:   42:
+        -:   43:    // Total motion plans
+       36:   44:    uint64_t motionPlans = 0;
+        -:   45:
+        -:   46:    // Total motor executions
+       36:   47:    uint64_t motorExecutions = 0;
+        -:   48:
+        -:   49:    // Emergency stop count
+       36:   50:    uint64_t emergencyStops = 0;
+        -:   51:
+        -:   52:    // Fault count
+       36:   53:    uint64_t totalFaults = 0;
+        -:   54:
+        -:   55:    // Timing violations
+       36:   56:    uint64_t timingViolations = 0;
+        -:   57:
+        -:   58:    // Missed control cycles
+       36:   59:    uint64_t missedControlCycles = 0;
+        -:   60:
+        -:   61:    // Sensor timeout count
+       36:   62:    uint64_t sensorTimeouts = 0;
+        -:   63:
+        -:   64:    // Motion timeout count
+       36:   65:    uint64_t motionTimeouts = 0;
+        -:   66:
+        -:   67:    // Driver fault count
+       36:   68:    uint64_t driverFaults = 0;
+        -:   69:
+        -:   70:    // Last statistics update
+       36:   71:    uint32_t lastStatisticsUpdateTimestampMs = 0;
+        -:   72:};

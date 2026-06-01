@@ -1,0 +1,47 @@
+        -:    0:Source:lib/shared/interfaces/include/motor/driver/MotorDriverCommand.hpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-MotorController.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-MotorController.gcda
+        -:    0:Runs:1
+        -:    1:#pragma once
+        -:    2:
+        -:    3:#include "interfaces/include/motor/driver/MotorDriverTypes.hpp"
+        -:    4:
+        -:    5:#include <stdint.h>
+        -:    6:
+        -:    7://====================================================
+        -:    8:// MotorDriverCommand
+        -:    9:// Hardware-neutral motor command.
+        -:   10:// Produced by: MotorController, Consumed by: IMotorDriver
+        -:   11://====================================================
+        -:   12:
+    #####:   13:struct MotorDriverCommand
+        -:   14:{
+        -:   15:    // Target channel
+    #####:   16:    MotorChannel channel = MotorChannel::Left;
+        -:   17:
+        -:   18:    // Direction
+    #####:   19:    MotorDirection direction = MotorDirection::Stop;
+        -:   20:
+        -:   21:    // Braking
+    #####:   22:    BrakeMode brakeMode = BrakeMode::Coast;
+        -:   23:
+        -:   24:    // Normalized motor Speed: 0.0f -> 1.0f
+        -:   25:    // Hardware layer converts:  normalizedSpeed -> PWM duty
+        -:   26:    // Examples: 0.0f = stop, 0.5f = 50% speed, 1.0f = maximum speed
+        -:   27:    // Hardware drivers convert this value
+        -:   28:    // into platform-specific PWM duty cycles.
+    #####:   29:    float normalizedSpeed = 0.0f;
+        -:   30:
+        -:   31:    // Motor output enabled. Enable state
+        -:   32:    // false: Driver disables motor output.
+        -:   33:    // true: Driver may drive motor according to command parameters.
+    #####:   34:    bool enabled = true;
+        -:   35:
+        -:   36:    // Emergency stop request.
+        -:   37:    // When true: Driver immediately enters, emergency stop state and ignores, normal motion commands.
+    #####:   38:    bool emergencyStop = false;
+        -:   39:
+        -:   40:    // Sequence identifier
+        -:   41:    // Useful for: - debugging,  - telemetry, - synchronization
+    #####:   42:    uint32_t sequenceId = 0;
+        -:   43:};

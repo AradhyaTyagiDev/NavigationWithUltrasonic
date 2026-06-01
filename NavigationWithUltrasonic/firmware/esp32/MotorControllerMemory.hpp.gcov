@@ -1,0 +1,74 @@
+        -:    0:Source:lib/shared/core/motor/controller/include/MotorControllerMemory.hpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-MotorController.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-MotorController.gcda
+        -:    0:Runs:1
+        -:    1://
+        -:    2:
+        -:    3://====================================================
+        -:    4:// File: MotorControllerMemory.hpp
+        -:    5://====================================================
+        -:    6:
+        -:    7:#pragma once
+        -:    8:
+        -:    9:#include "motor/controller/include/MotorState.hpp"
+        -:   10:#include "motor/controller/include/WheelState.hpp"
+        -:   11:
+        -:   12:#include <stdint.h>
+        -:   13:
+        -:   14://====================================================
+        -:   15:// MotorControllerMemory: Store runtime locomotion execution state
+        -:   16:// Tracks: execution state, synchronization, braking, emergency state, runtime coordination
+        -:   17://====================================================
+      124:   18:struct MotorControllerMemory
+        -:   19:{
+        -:   20:    // Current motor execution state
+       62:   21:    MotorState currentState = MotorState::Idle;
+        -:   22:
+        -:   23:    // Previous execution state
+       62:   24:    MotorState previousState = MotorState::Idle;
+        -:   25:
+        -:   26:    // Left wheel runtime state
+        -:   27:    WheelState leftWheelState;
+        -:   28:
+        -:   29:    // Right wheel runtime state
+        -:   30:    WheelState rightWheelState;
+        -:   31:
+        -:   32:    // Emergency state active
+       62:   33:    bool emergencyStopActive = false;
+        -:   34:
+        -:   35:    // Coordinated braking active
+       62:   36:    bool coordinatedBrakingActive = false;
+        -:   37:
+        -:   38:    // Reverse transition active
+       62:   39:    bool reverseTransitionActive = false;
+        -:   40:
+        -:   41:    // Motion execution active
+       62:   42:    bool motionExecutionActive = false;
+        -:   43:
+        -:   44:    // Synchronization active
+       62:   45:    bool wheelSynchronizationActive = false;
+        -:   46:
+        -:   47:    // Fault state active
+       62:   48:    bool faultActive = false;
+        -:   49:
+        -:   50:    // Current execution sequence ID
+       62:   51:    uint32_t currentSequenceId = 0;
+        -:   52:
+        -:   53:    // Executed command count
+       62:   54:    uint64_t executedCommandCount = 0;
+        -:   55:
+        -:   56:    // Rejected command count
+       62:   57:    uint64_t rejectedCommandCount = 0;
+        -:   58:
+        -:   59:    // Last command timestamp
+       62:   60:    uint32_t lastCommandTimestampMs = 0;
+        -:   61:
+        -:   62:    // Last state transition timestamp
+       62:   63:    uint32_t lastStateTransitionTimestampMs = 0;
+        -:   64:
+        -:   65:    // Last emergency timestamp
+       62:   66:    uint32_t lastEmergencyTimestampMs = 0;
+        -:   67:
+        -:   68:    // Last synchronization timestamp
+       62:   69:    uint32_t lastSynchronizationTimestampMs = 0;
+        -:   70:};

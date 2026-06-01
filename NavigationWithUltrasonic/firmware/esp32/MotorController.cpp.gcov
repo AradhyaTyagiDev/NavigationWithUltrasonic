@@ -1,0 +1,1666 @@
+        -:    0:Source:lib/shared/core/motor/controller/src/MotorController.cpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-MotorController.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-MotorController.gcda
+        -:    0:Runs:1
+        -:    1://====================================================
+        -:    2:// File: MotorController.cpp
+        -:    3://====================================================
+        -:    4:
+        -:    5:#include "motor/controller/include/MotorController.hpp"
+        -:    6:#include "interfaces/include/synchronization/LockGuard.hpp"
+        -:    7:#include "interfaces/include/logging/LoggerExtensions.hpp"
+        -:    8:
+        -:    9:#include <algorithm>
+        -:   10:#include <cmath>
+        -:   11:
+        -:   12:static const char *TAG = "MotorController";
+        -:   13:
+        -:   14://====================================================
+        -:   15:// Constructor
+        -:   16://====================================================
+        -:   17:
+      186:   18:MotorController::MotorController(
+        -:   19:    IMotorDriver &motorDriver,
+        -:   20:    IMutex &mutex,
+        -:   21:    ILogger &logger,
+        -:   22:    ITimer &timer,
+        -:   23:    const MotorControllerConfig &config)
+      186:   24:    : m_motorDriver(motorDriver), m_mutex(mutex), m_logger(logger), m_timer(timer), m_config(config)
+       62:   25:{
+      124:   26:}
+        -:   27:
+        -:   28://====================================================
+        -:   29:// Initialization
+        -:   30://====================================================
+        -:   31:
+       60:   32:bool MotorController::initialize()
+        -:   33:{
+       60:   34:    LockGuard guard(m_mutex);
+        -:   35:
+        -:   36:    //-----------------------------------------
+        -:   37:    // Driver initialization
+        -:   38:    //-----------------------------------------
+        -:   39:
+       60:   40:    if (!m_motorDriver.initialize())
+        -:   41:    {
+        2:   42:        Logger::info(
+        2:   43:            m_logger,
+        2:   44:            TAG,
+        -:   45:            "Motor driver initialization failed");
+        -:   46:
+        2:   47:        return false;
+        -:   48:    }
+        -:   49:
+        -:   50:    //-----------------------------------------
+        -:   51:    // Reset runtime memory
+        -:   52:    //-----------------------------------------
+        -:   53:
+       58:   54:    m_memory = {};
+        -:   55:
+        -:   56:    //-----------------------------------------
+        -:   57:    // Initial runtime state
+        -:   58:    //-----------------------------------------
+        -:   59:
+       58:   60:    transitionToState(
+        -:   61:        MotorState::Idle);
+        -:   62:
+       58:   63:    Logger::info(
+       58:   64:        m_logger,
+       58:   65:        TAG,
+        -:   66:        "MotorController initialized");
+        -:   67:
+       58:   68:    return true;
+       60:   69:}
+        -:   70:
+        -:   71://====================================================
+        -:   72:// Shutdown
+        -:   73://====================================================
+        -:   74:
+       36:   75:void MotorController::shutdown()
+        -:   76:{
+       36:   77:    LockGuard guard(m_mutex);
+        -:   78:
+        -:   79:    //-----------------------------------------
+        -:   80:    // Stop locomotion
+        -:   81:    //-----------------------------------------
+        -:   82:
+       36:   83:    stopInternal();
+        -:   84:
+        -:   85:    //-----------------------------------------
+        -:   86:    // Shutdown driver
+        -:   87:    //-----------------------------------------
+        -:   88:
+       36:   89:    m_motorDriver.shutdown();
+        -:   90:
+        -:   91:    //-----------------------------------------
+        -:   92:    // Runtime state
+        -:   93:    //-----------------------------------------
+        -:   94:
+       36:   95:    transitionToState(
+        -:   96:        MotorState::Idle);
+        -:   97:
+       36:   98:    Logger::info(
+       36:   99:        m_logger,
+       36:  100:        TAG,
+        -:  101:        "MotorController shutdown");
+       36:  102:}
+        -:  103:
+        -:  104://====================================================
+        -:  105:// Main motion execution pipeline
+        -:  106://====================================================
+        -:  107:
+        1:  108:void MotorController::executeMotion(
+        -:  109:    const MotionCommand &motionCommand)
+        -:  110:{
+        1:  111:    LockGuard guard(m_mutex);
+        -:  112:
+        1:  113:    executeMotionInternal(
+        1:  114:        motionCommand);
+        1:  115:}
+        -:  116:
+      189:  117:bool MotorController::tryExecuteMotion(
+        -:  118:    const MotionCommand &motionCommand)
+        -:  119:{
+      189:  120:    if (!m_mutex.tryLock())
+        -:  121:    {
+        3:  122:        return false;
+        -:  123:    }
+        -:  124:
+      186:  125:    executeMotionInternal(
+      186:  126:        motionCommand);
+        -:  127:
+      186:  128:    m_mutex.unlock();
+        -:  129:
+      186:  130:    return true;
+      189:  131:}
+        -:  132:
+        -:  133://====================================================
+        -:  134:// Internal motion execution
+        -:  135://====================================================
+        -:  136:
+      187:  137:void MotorController::executeMotionInternal(
+        -:  138:    const MotionCommand &motionCommand)
+        -:  139:{
+        -:  140:    //-----------------------------------------
+        -:  141:    // Emergency protection
+        -:  142:    //-----------------------------------------
+        -:  143:
+      187:  144:    if (m_memory.emergencyStopActive)
+        -:  145:    {
+        3:  146:        Logger::warning(
+        3:  147:            m_logger,
+        3:  148:            TAG,
+        -:  149:            "Ignoring motion during emergency");
+        -:  150:
+        3:  151:        return;
+        -:  152:    }
+        -:  153:
+        -:  154:    //-----------------------------------------
+        -:  155:    // Driver health validation
+        -:  156:    //-----------------------------------------
+        -:  157:
+      184:  158:    if (!validateDriverHealth())
+        -:  159:    {
+        5:  160:        handleFault(
+        -:  161:            "Driver health validation failed");
+        -:  162:
+        5:  163:        return;
+        -:  164:    }
+        -:  165:
+        -:  166:    //-----------------------------------------
+        -:  167:    // Motion validation
+        -:  168:    //-----------------------------------------
+        -:  169:
+      179:  170:    if (!validateMotionCommand(
+      179:  171:            motionCommand))
+        -:  172:    {
+        2:  173:        handleFault(
+        -:  174:            "Invalid motion command");
+        -:  175:
+        2:  176:        return;
+        -:  177:    }
+        -:  178:
+        -:  179:    //-----------------------------------------
+        -:  180:    // Motion safety validation
+        -:  181:    //-----------------------------------------
+        -:  182:
+      177:  183:    if (!validateMotionSafety(
+      177:  184:            motionCommand))
+        -:  185:    {
+    #####:  186:        handleFault(
+        -:  187:            "Unsafe motion command");
+        -:  188:
+    #####:  189:        return;
+        -:  190:    }
+        -:  191:
+        -:  192:    //-----------------------------------------
+        -:  193:    // Runtime timestamp
+        -:  194:    //-----------------------------------------
+        -:  195:
+      177:  196:    const uint32_t currentTimestampMs = Timer::milliseconds(m_timer);
+        -:  197:
+        -:  198:    //-----------------------------------------
+        -:  199:    // Wheel commands
+        -:  200:    //-----------------------------------------
+        -:  201:
+      177:  202:    WheelCommand leftWheelCommand;
+        -:  203:
+      177:  204:    WheelCommand rightWheelCommand;
+        -:  205:
+      177:  206:    generateWheelCommands(
+      177:  207:        motionCommand,
+        -:  208:        leftWheelCommand,
+        -:  209:        rightWheelCommand);
+        -:  210:
+        -:  211:    //-----------------------------------------
+        -:  212:    // Synchronization
+        -:  213:    //-----------------------------------------
+        -:  214:
+      177:  215:    applyWheelSynchronization(
+        -:  216:        leftWheelCommand,
+        -:  217:        rightWheelCommand);
+        -:  218:
+        -:  219:    //-----------------------------------------
+        -:  220:    // Motion smoothing
+        -:  221:    //-----------------------------------------
+        -:  222:
+      177:  223:    applyMotionSmoothing(
+        -:  224:        leftWheelCommand,
+        -:  225:        rightWheelCommand,
+      177:  226:        currentTimestampMs);
+        -:  227:
+        -:  228:    //-----------------------------------------
+        -:  229:    // Deadzone compensation
+        -:  230:    //-----------------------------------------
+        -:  231:
+      177:  232:    applyDeadzoneCompensation(
+        -:  233:        leftWheelCommand);
+        -:  234:
+      177:  235:    applyDeadzoneCompensation(
+        -:  236:        rightWheelCommand);
+        -:  237:
+        -:  238:    //-----------------------------------------
+        -:  239:    // Startup boost
+        -:  240:    //-----------------------------------------
+        -:  241:
+      177:  242:    applyStartupBoost(
+        -:  243:        leftWheelCommand,
+      177:  244:        m_memory.leftWheelState);
+        -:  245:
+      177:  246:    applyStartupBoost(
+        -:  247:        rightWheelCommand,
+      177:  248:        m_memory.rightWheelState);
+        -:  249:
+        -:  250:    //-----------------------------------------
+        -:  251:    // Reverse transition validation
+        -:  252:    //-----------------------------------------
+        -:  253:
+      177:  254:    if (!validateReverseTransition(
+        -:  255:            leftWheelCommand,
+      177:  256:            m_memory.leftWheelState))
+        -:  257:    {
+        2:  258:        leftWheelCommand.speedPercent =
+        -:  259:            0.0f;
+        2:  260:    }
+        -:  261:
+      177:  262:    if (!validateReverseTransition(
+        -:  263:            rightWheelCommand,
+      177:  264:            m_memory.rightWheelState))
+        -:  265:    {
+        2:  266:        rightWheelCommand.speedPercent =
+        -:  267:            0.0f;
+        2:  268:    }
+        -:  269:
+        -:  270:    //-----------------------------------------
+        -:  271:    // Coordinated braking
+        -:  272:    //-----------------------------------------
+        -:  273:
+      177:  274:    applyCoordinatedBraking(
+        -:  275:        leftWheelCommand,
+        -:  276:        rightWheelCommand);
+        -:  277:
+        -:  278:    //-----------------------------------------
+        -:  279:    // Emergency behavior
+        -:  280:    //-----------------------------------------
+        -:  281:
+        -:  282:    if (
+      177:  283:        motionCommand.emergencyBrakingActive)
+        -:  284:    {
+        4:  285:        applyEmergencyBehavior(
+        -:  286:            leftWheelCommand,
+        -:  287:            rightWheelCommand);
+        4:  288:    }
+        -:  289:
+        -:  290:    //-----------------------------------------
+        -:  291:    // Sequence ID
+        -:  292:    //-----------------------------------------
+        -:  293:
+      177:  294:    const uint32_t sequenceId =
+      177:  295:        ++m_sequenceCounter;
+        -:  296:
+        -:  297:    //-----------------------------------------
+        -:  298:    // Generate driver commands
+        -:  299:    //-----------------------------------------
+        -:  300:
+        -:  301:    MotorDriverCommand leftDriverCommand =
+      177:  302:        generateMotorDriverCommand(
+        -:  303:            MotorChannel::Left,
+        -:  304:            leftWheelCommand,
+      177:  305:            sequenceId);
+        -:  306:
+        -:  307:    MotorDriverCommand rightDriverCommand =
+      177:  308:        generateMotorDriverCommand(
+        -:  309:            MotorChannel::Right,
+        -:  310:            rightWheelCommand,
+      177:  311:            sequenceId);
+        -:  312:
+        -:  313:    //-----------------------------------------
+        -:  314:    // Execute wheel commands
+        -:  315:    //-----------------------------------------
+        -:  316:
+      177:  317:    executeWheelCommands(
+        -:  318:        leftDriverCommand,
+        -:  319:        rightDriverCommand);
+        -:  320:
+        -:  321:    //-----------------------------------------
+        -:  322:    // Update runtime wheel state
+        -:  323:    //-----------------------------------------
+        -:  324:
+      177:  325:    updateWheelState(
+      177:  326:        m_memory.leftWheelState,
+        -:  327:        leftWheelCommand,
+      177:  328:        currentTimestampMs);
+        -:  329:
+      177:  330:    updateWheelState(
+      177:  331:        m_memory.rightWheelState,
+        -:  332:        rightWheelCommand,
+      177:  333:        currentTimestampMs);
+        -:  334:
+        -:  335:    //-----------------------------------------
+        -:  336:    // Update runtime memory
+        -:  337:    //-----------------------------------------
+        -:  338:
+      177:  339:    updateRuntimeMemory(
+      177:  340:        motionCommand,
+      177:  341:        currentTimestampMs);
+        -:  342:
+        -:  343:    //-----------------------------------------
+        -:  344:    // State transition
+        -:  345:    //-----------------------------------------
+        -:  346:
+      177:  347:    transitionToState(
+      177:  348:        determineMotorState(
+      177:  349:            motionCommand));
+        -:  350:
+        -:  351:    //-----------------------------------------
+        -:  352:    // Statistics
+        -:  353:    //-----------------------------------------
+        -:  354:
+      177:  355:    m_memory.executedCommandCount++;
+        -:  356:
+      177:  357:    m_memory.motionExecutionActive =
+        -:  358:        true;
+      187:  359:}
+        -:  360:
+        -:  361://====================================================
+        -:  362:// Runtime update loop
+        -:  363://====================================================
+        -:  364:
+      643:  365:void MotorController::update(
+        -:  366:    uint32_t currentTimestampMs)
+        -:  367:{
+      643:  368:    LockGuard guard(m_mutex);
+        -:  369:
+        -:  370:    //-----------------------------------------
+        -:  371:    // Skip ultra-fast updates
+        -:  372:    //-----------------------------------------
+        -:  373:
+      643:  374:    if (shouldSkipUpdate(currentTimestampMs))
+        -:  375:    {
+        1:  376:        return;
+        -:  377:    }
+        -:  378:
+        -:  379:    //-----------------------------------------
+        -:  380:    // Motion timeout supervision
+        -:  381:    //-----------------------------------------
+        -:  382:
+        -:  383:    if (
+      642:  384:        hasMotionTimedOut(
+      642:  385:            currentTimestampMs))
+        -:  386:    {
+        1:  387:        Logger::warning(
+        1:  388:            m_logger,
+        1:  389:            TAG,
+        -:  390:            "Motion timeout detected");
+        -:  391:
+        1:  392:        stopInternal();
+        1:  393:    }
+        -:  394:
+        -:  395:    //-----------------------------------------
+        -:  396:    // Runtime monitoring
+        -:  397:    //-----------------------------------------
+        -:  398:
+      642:  399:    performRuntimeMonitoring(
+      642:  400:        currentTimestampMs);
+        -:  401:
+        -:  402:    //-----------------------------------------
+        -:  403:    // Driver update
+        -:  404:    //-----------------------------------------
+        -:  405:
+     1284:  406:    m_motorDriver.update(
+      642:  407:        currentTimestampMs);
+        -:  408:
+      642:  409:    m_memory.lastSynchronizationTimestampMs =
+      642:  410:        currentTimestampMs;
+      643:  411:}
+        -:  412:
+        -:  413://====================================================
+        -:  414:// Emergency stop
+        -:  415://====================================================
+        -:  416:
+       16:  417:void MotorController::emergencyStop()
+        -:  418:{
+       16:  419:    LockGuard guard(m_mutex);
+        -:  420:
+       16:  421:    emergencyStopInternal();
+       16:  422:}
+        -:  423:
+        -:  424://====================================================
+        -:  425:// Internal emergency stop
+        -:  426://====================================================
+        -:  427:
+       16:  428:void MotorController::emergencyStopInternal()
+        -:  429:{
+        -:  430:    //-----------------------------------------
+        -:  431:    // Already active
+        -:  432:    //-----------------------------------------
+        -:  433:
+       16:  434:    if (m_memory.emergencyStopActive)
+        -:  435:    {
+        2:  436:        return;
+        -:  437:    }
+        -:  438:
+        -:  439:    //-----------------------------------------
+        -:  440:    // Activate runtime emergency state
+        -:  441:    //-----------------------------------------
+        -:  442:
+       14:  443:    m_memory.emergencyStopActive =
+        -:  444:        true;
+        -:  445:
+       14:  446:    m_memory.lastEmergencyTimestampMs = Timer::milliseconds(m_timer);
+        -:  447:
+        -:  448:    //-----------------------------------------
+        -:  449:    // Driver emergency stop
+        -:  450:    //-----------------------------------------
+        -:  451:
+       14:  452:    m_motorDriver.emergencyStop();
+        -:  453:
+        -:  454:    //-----------------------------------------
+        -:  455:    // Runtime state
+        -:  456:    //-----------------------------------------
+        -:  457:
+       14:  458:    transitionToState(
+        -:  459:        MotorState::EmergencyStop);
+        -:  460:
+       14:  461:    Logger::info(
+       14:  462:        m_logger,
+       14:  463:        TAG,
+        -:  464:        "Emergency stop activated");
+       16:  465:}
+        -:  466:
+        -:  467://====================================================
+        -:  468:// Clear emergency stop
+        -:  469://====================================================
+        -:  470:
+        3:  471:void MotorController::clearEmergencyStop()
+        -:  472:{
+        3:  473:    LockGuard guard(m_mutex);
+        -:  474:
+        -:  475:    //-----------------------------------------
+        -:  476:    // Driver clear
+        -:  477:    //-----------------------------------------
+        -:  478:
+        3:  479:    m_motorDriver.clearEmergencyStop();
+        -:  480:
+        -:  481:    //-----------------------------------------
+        -:  482:    // Runtime reset
+        -:  483:    //-----------------------------------------
+        -:  484:
+        3:  485:    m_memory.emergencyStopActive =
+        -:  486:        false;
+        -:  487:
+        -:  488:    //-----------------------------------------
+        -:  489:    // Runtime state
+        -:  490:    //-----------------------------------------
+        -:  491:
+        3:  492:    transitionToState(
+        -:  493:        MotorState::Idle);
+        -:  494:
+        3:  495:    Logger::info(
+        3:  496:        m_logger,
+        3:  497:        TAG,
+        -:  498:        "Emergency stop cleared");
+        3:  499:}
+        -:  500:
+        -:  501://====================================================
+        -:  502:// Stop locomotion
+        -:  503://====================================================
+        -:  504:
+       26:  505:void MotorController::stop()
+        -:  506:{
+       26:  507:    LockGuard guard(m_mutex);
+        -:  508:
+       26:  509:    stopInternal();
+       26:  510:}
+        -:  511:
+        -:  512://====================================================
+        -:  513:// Internal stop
+        -:  514://====================================================
+        -:  515:
+       66:  516:void MotorController::stopInternal()
+        -:  517:{
+        -:  518:    //-----------------------------------------
+        -:  519:    // Driver stop
+        -:  520:    //-----------------------------------------
+        -:  521:
+       66:  522:    m_motorDriver.stopAllMotors();
+        -:  523:
+        -:  524:    //-----------------------------------------
+        -:  525:    // Runtime state
+        -:  526:    //-----------------------------------------
+        -:  527:
+       66:  528:    transitionToState(
+        -:  529:        MotorState::Idle);
+        -:  530:
+        -:  531:    //-----------------------------------------
+        -:  532:    // Runtime flags
+        -:  533:    //-----------------------------------------
+        -:  534:
+       66:  535:    m_memory.motionExecutionActive =
+        -:  536:        false;
+       66:  537:}
+        -:  538:
+        -:  539://====================================================
+        -:  540:// Runtime reset
+        -:  541://====================================================
+        -:  542:
+        3:  543:void MotorController::reset()
+        -:  544:{
+        3:  545:    LockGuard guard(m_mutex);
+        -:  546:
+        -:  547:    //-----------------------------------------
+        -:  548:    // Stop locomotion
+        -:  549:    //-----------------------------------------
+        -:  550:
+        3:  551:    stopInternal();
+        -:  552:
+        -:  553:    //-----------------------------------------
+        -:  554:    // Driver reset
+        -:  555:    //-----------------------------------------
+        -:  556:
+        3:  557:    m_motorDriver.reset();
+        -:  558:
+        -:  559:    //-----------------------------------------
+        -:  560:    // Reset runtime memory
+        -:  561:    //-----------------------------------------
+        -:  562:
+        3:  563:    m_memory = {};
+        -:  564:
+        -:  565:    //-----------------------------------------
+        -:  566:    // Reset sequence generator
+        -:  567:    //-----------------------------------------
+        -:  568:
+        3:  569:    m_sequenceCounter = 0;
+        -:  570:
+        -:  571:    //-----------------------------------------
+        -:  572:    // Runtime state
+        -:  573:    //-----------------------------------------
+        -:  574:
+        3:  575:    transitionToState(
+        -:  576:        MotorState::Idle);
+        -:  577:
+        3:  578:    Logger::info(
+        3:  579:        m_logger,
+        3:  580:        TAG,
+        -:  581:        "MotorController reset");
+        3:  582:}
+        -:  583:
+        -:  584://====================================================
+        -:  585:// Current runtime state
+        -:  586://====================================================
+        -:  587:
+        3:  588:MotorState MotorController::getCurrentState() const
+        -:  589:{
+        3:  590:    return m_memory.currentState;
+        -:  591:}
+        -:  592:
+        -:  593://====================================================
+        -:  594:// Runtime memory
+        -:  595://====================================================
+        -:  596:
+        1:  597:MotorControllerMemory MotorController::getMemory() const
+        -:  598:{
+        1:  599:    return m_memory;
+        -:  600:}
+        -:  601:
+        -:  602://====================================================
+        -:  603:// Fault state
+        -:  604://====================================================
+        -:  605:
+      872:  606:bool MotorController::hasFault() const
+        -:  607:{
+      872:  608:    return m_memory.faultActive;
+        -:  609:}
+        -:  610:
+        -:  611://====================================================
+        -:  612:// Emergency state
+        -:  613://====================================================
+        -:  614:
+      180:  615:bool MotorController::isEmergencyStopActive() const
+        -:  616:{
+      180:  617:    return m_memory.emergencyStopActive;
+        -:  618:}
+        -:  619:
+        -:  620://====================================================
+        -:  621:// Driver health validation
+        -:  622://====================================================
+        -:  623:
+      184:  624:bool MotorController::validateDriverHealth() const
+        -:  625:{
+        -:  626:    //-----------------------------------------
+        -:  627:    // Ready state
+        -:  628:    //-----------------------------------------
+        -:  629:
+      184:  630:    if (!m_motorDriver.isReady())
+        -:  631:    {
+        1:  632:        return false;
+        -:  633:    }
+        -:  634:
+        -:  635:    //-----------------------------------------
+        -:  636:    // Driver fault
+        -:  637:    //-----------------------------------------
+        -:  638:
+      183:  639:    if (m_motorDriver.hasFault())
+        -:  640:    {
+        4:  641:        return false;
+        -:  642:    }
+        -:  643:
+      179:  644:    return true;
+      184:  645:}
+        -:  646:
+        -:  647://====================================================
+        -:  648:// Motion validation
+        -:  649://====================================================
+        -:  650:
+      179:  651:bool MotorController::validateMotionCommand(
+        -:  652:    const MotionCommand &motionCommand) const
+        -:  653:{
+        -:  654:    //-----------------------------------------
+        -:  655:    // Finite validation
+        -:  656:    //-----------------------------------------
+        -:  657:
+      179:  658:    if (!std::isfinite(
+      179:  659:            motionCommand.leftWheelSpeed))
+        -:  660:    {
+    #####:  661:        return false;
+        -:  662:    }
+        -:  663:
+      179:  664:    if (!std::isfinite(
+      179:  665:            motionCommand.rightWheelSpeed))
+        -:  666:    {
+    #####:  667:        return false;
+        -:  668:    }
+        -:  669:
+        -:  670:    //-----------------------------------------
+        -:  671:    // Range validation
+        -:  672:    //-----------------------------------------
+        -:  673:
+        -:  674:    if (
+      179:  675:        motionCommand.leftWheelSpeed < -1.0f ||
+      179:  676:        motionCommand.leftWheelSpeed > 1.0f)
+        -:  677:    {
+        1:  678:        return false;
+        -:  679:    }
+        -:  680:
+        -:  681:    if (
+      178:  682:        motionCommand.rightWheelSpeed < -1.0f ||
+      178:  683:        motionCommand.rightWheelSpeed > 1.0f)
+        -:  684:    {
+    #####:  685:        return false;
+        -:  686:    }
+        -:  687:
+        -:  688:    //-----------------------------------------
+        -:  689:    // Confidence validation
+        -:  690:    //-----------------------------------------
+        -:  691:
+        -:  692:    if (
+      178:  693:        motionCommand.motionConfidence <
+        -:  694:        0.0f)
+        -:  695:    {
+        1:  696:        return false;
+        -:  697:    }
+        -:  698:
+      177:  699:    return true;
+      179:  700:}
+        -:  701:
+        -:  702://====================================================
+        -:  703:// Motion safety validation
+        -:  704://====================================================
+        -:  705:
+      177:  706:bool MotorController::validateMotionSafety(const MotionCommand &motionCommand) const
+        -:  707:{
+        -:  708:    //-----------------------------------------
+        -:  709:    // Future:
+        -:  710:    // wheel divergence
+        -:  711:    // instability
+        -:  712:    // unsafe acceleration
+        -:  713:    //-----------------------------------------
+        -:  714:
+      177:  715:    (void)motionCommand;
+        -:  716:
+      177:  717:    return true;
+        -:  718:}
+        -:  719:
+        -:  720://====================================================
+        -:  721:// Generate wheel commands
+        -:  722://====================================================
+        -:  723:
+      177:  724:void MotorController::generateWheelCommands(
+        -:  725:    const MotionCommand &motionCommand,
+        -:  726:    WheelCommand &leftWheelCommand,
+        -:  727:    WheelCommand &rightWheelCommand)
+        -:  728:{
+      177:  729:    leftWheelCommand =
+      177:  730:        generateLeftWheelCommand(
+      177:  731:            motionCommand);
+        -:  732:
+      177:  733:    rightWheelCommand =
+      177:  734:        generateRightWheelCommand(
+      177:  735:            motionCommand);
+      177:  736:}
+        -:  737:
+        -:  738://====================================================
+        -:  739:// Left wheel command generation
+        -:  740://====================================================
+        -:  741:
+        -:  742:WheelCommand
+      177:  743:MotorController::generateLeftWheelCommand(
+        -:  744:    const MotionCommand &motionCommand)
+        -:  745:{
+      177:  746:    WheelCommand command;
+        -:  747:
+        -:  748:    //-----------------------------------------
+        -:  749:    // Speed
+        -:  750:    //-----------------------------------------
+        -:  751:
+      177:  752:    const float speed =
+      177:  753:        motionCommand.leftWheelSpeed;
+        -:  754:
+      177:  755:    command.speedPercent =
+      177:  756:        std::fabs(speed);
+        -:  757:
+        -:  758:    //-----------------------------------------
+        -:  759:    // Direction
+        -:  760:    //-----------------------------------------
+        -:  761:
+      177:  762:    if (speed > 0.0f)
+        -:  763:    {
+      154:  764:        command.direction =
+        -:  765:            MotorDirection::Forward;
+      154:  766:    }
+       23:  767:    else if (speed < 0.0f)
+        -:  768:    {
+        4:  769:        command.direction =
+        -:  770:            MotorDirection::Reverse;
+        4:  771:    }
+        -:  772:    else
+        -:  773:    {
+       19:  774:        command.direction =
+        -:  775:            MotorDirection::Stop;
+        -:  776:    }
+        -:  777:
+        -:  778:    //-----------------------------------------
+        -:  779:    // Brake mode
+        -:  780:    //-----------------------------------------
+        -:  781:
+      177:  782:    command.brakeMode =
+      177:  783:        motionCommand.brakingActive
+        -:  784:            ? BrakeMode::Active
+        -:  785:            : BrakeMode::Coast;
+        -:  786:
+        -:  787:    //-----------------------------------------
+        -:  788:    // Emergency
+        -:  789:    //-----------------------------------------
+        -:  790:
+      177:  791:    command.emergencyBrake =
+      177:  792:        motionCommand.emergencyBrakingActive;
+        -:  793:
+        -:  794:    //-----------------------------------------
+        -:  795:    // Runtime timestamp
+        -:  796:    //-----------------------------------------
+        -:  797:
+      177:  798:    command.timestampMs = Timer::milliseconds(m_timer);
+        -:  799:
+      177:  800:    return command;
+        -:  801:}
+        -:  802:
+        -:  803://====================================================
+        -:  804:// Right wheel command generation
+        -:  805://====================================================
+        -:  806:
+        -:  807:WheelCommand
+      177:  808:MotorController::generateRightWheelCommand(
+        -:  809:    const MotionCommand &motionCommand)
+        -:  810:{
+      177:  811:    WheelCommand command;
+        -:  812:
+        -:  813:    //-----------------------------------------
+        -:  814:    // Speed
+        -:  815:    //-----------------------------------------
+        -:  816:
+      177:  817:    const float speed =
+      177:  818:        motionCommand.rightWheelSpeed;
+        -:  819:
+      177:  820:    command.speedPercent =
+      177:  821:        std::fabs(speed);
+        -:  822:
+        -:  823:    //-----------------------------------------
+        -:  824:    // Direction
+        -:  825:    //-----------------------------------------
+        -:  826:
+      177:  827:    if (speed > 0.0f)
+        -:  828:    {
+      153:  829:        command.direction =
+        -:  830:            MotorDirection::Forward;
+      153:  831:    }
+       24:  832:    else if (speed < 0.0f)
+        -:  833:    {
+        4:  834:        command.direction =
+        -:  835:            MotorDirection::Reverse;
+        4:  836:    }
+        -:  837:    else
+        -:  838:    {
+       20:  839:        command.direction =
+        -:  840:            MotorDirection::Stop;
+        -:  841:    }
+        -:  842:
+        -:  843:    //-----------------------------------------
+        -:  844:    // Brake mode
+        -:  845:    //-----------------------------------------
+        -:  846:
+      177:  847:    command.brakeMode =
+      177:  848:        motionCommand.brakingActive
+        -:  849:            ? BrakeMode::Active
+        -:  850:            : BrakeMode::Coast;
+        -:  851:
+        -:  852:    //-----------------------------------------
+        -:  853:    // Emergency
+        -:  854:    //-----------------------------------------
+        -:  855:
+      177:  856:    command.emergencyBrake =
+      177:  857:        motionCommand.emergencyBrakingActive;
+        -:  858:
+        -:  859:    //-----------------------------------------
+        -:  860:    // Runtime timestamp
+        -:  861:    //-----------------------------------------
+        -:  862:
+      177:  863:    command.timestampMs = Timer::milliseconds(m_timer);
+        -:  864:
+      177:  865:    return command;
+        -:  866:}
+        -:  867:
+        -:  868://====================================================
+        -:  869:// Wheel synchronization
+        -:  870://====================================================
+        -:  871:
+      177:  872:void MotorController::applyWheelSynchronization(
+        -:  873:    WheelCommand &leftWheelCommand,
+        -:  874:    WheelCommand &rightWheelCommand)
+        -:  875:{
+      177:  876:    if (!m_config.enableWheelSynchronization)
+        -:  877:    {
+       11:  878:        return;
+        -:  879:    }
+        -:  880:
+        -:  881:    //-----------------------------------------
+        -:  882:    // Wheel divergence protection
+        -:  883:    //-----------------------------------------
+        -:  884:
+      166:  885:    const float speedDifference =
+      166:  886:        std::fabs(
+      332:  887:            leftWheelCommand.speedPercent -
+      166:  888:            rightWheelCommand.speedPercent);
+        -:  889:
+        -:  890:    //-----------------------------------------
+        -:  891:    // Synchronization threshold
+        -:  892:    //-----------------------------------------
+        -:  893:
+      166:  894:    constexpr float maximumAllowedDifference =
+        -:  895:        0.6f;
+        -:  896:
+        -:  897:    if (
+      166:  898:        speedDifference >
+        -:  899:        maximumAllowedDifference)
+        -:  900:    {
+        1:  901:        const float average =
+        2:  902:            (leftWheelCommand.speedPercent +
+        2:  903:             rightWheelCommand.speedPercent) *
+        -:  904:            0.5f;
+        -:  905:
+        1:  906:        leftWheelCommand.speedPercent =
+        1:  907:            average;
+        -:  908:
+        1:  909:        rightWheelCommand.speedPercent =
+        1:  910:            average;
+        1:  911:    }
+        -:  912:
+        -:  913:    //-----------------------------------------
+        -:  914:    // Runtime state
+        -:  915:    //-----------------------------------------
+        -:  916:
+      166:  917:    m_memory.wheelSynchronizationActive =
+        -:  918:        true;
+      177:  919:}
+        -:  920:
+        -:  921://====================================================
+        -:  922:// Motion smoothing
+        -:  923://====================================================
+        -:  924:
+      177:  925:void MotorController::applyMotionSmoothing(
+        -:  926:    WheelCommand &leftWheelCommand,
+        -:  927:    WheelCommand &rightWheelCommand,
+        -:  928:    uint32_t currentTimestampMs)
+        -:  929:{
+      177:  930:    if (!m_config.enableMotionSmoothing)
+        -:  931:    {
+       16:  932:        return;
+        -:  933:    }
+        -:  934:
+        -:  935:    //-----------------------------------------
+        -:  936:    // Left wheel
+        -:  937:    //-----------------------------------------
+        -:  938:
+      161:  939:    applyAccelerationLimits(
+      161:  940:        leftWheelCommand,
+      161:  941:        m_memory.leftWheelState,
+      161:  942:        currentTimestampMs);
+        -:  943:
+      161:  944:    applyDecelerationLimits(
+      161:  945:        leftWheelCommand,
+      161:  946:        m_memory.leftWheelState,
+      161:  947:        currentTimestampMs);
+        -:  948:
+        -:  949:    //-----------------------------------------
+        -:  950:    // Right wheel
+        -:  951:    //-----------------------------------------
+        -:  952:
+      161:  953:    applyAccelerationLimits(
+      161:  954:        rightWheelCommand,
+      161:  955:        m_memory.rightWheelState,
+      161:  956:        currentTimestampMs);
+        -:  957:
+      161:  958:    applyDecelerationLimits(
+      161:  959:        rightWheelCommand,
+      161:  960:        m_memory.rightWheelState,
+      161:  961:        currentTimestampMs);
+      177:  962:}
+        -:  963:
+        -:  964://====================================================
+        -:  965:// Acceleration limiting
+        -:  966://====================================================
+        -:  967:
+      322:  968:void MotorController::applyAccelerationLimits(
+        -:  969:    WheelCommand &wheelCommand,
+        -:  970:    WheelState &wheelState,
+        -:  971:    uint32_t currentTimestampMs)
+        -:  972:{
+        -:  973:    //-----------------------------------------
+        -:  974:    // Delta time
+        -:  975:    //-----------------------------------------
+        -:  976:
+      322:  977:    const float deltaTimeSec =
+        -:  978:        static_cast<float>(
+      644:  979:            currentTimestampMs -
+      644:  980:            wheelState.lastUpdateTimestampMs) /
+        -:  981:        1000.0f;
+        -:  982:
+      322:  983:    if (deltaTimeSec <= 0.0f)
+        -:  984:    {
+        4:  985:        return;
+        -:  986:    }
+        -:  987:
+        -:  988:    //-----------------------------------------
+        -:  989:    // Maximum allowed acceleration
+        -:  990:    //-----------------------------------------
+        -:  991:
+      318:  992:    const float maximumDelta =
+      636:  993:        m_config.maximumAccelerationPercentPerSec *
+      318:  994:        deltaTimeSec;
+        -:  995:
+        -:  996:    //-----------------------------------------
+        -:  997:    // Speed delta
+        -:  998:    //-----------------------------------------
+        -:  999:
+      318: 1000:    const float delta =
+      636: 1001:        wheelCommand.speedPercent -
+      318: 1002:        wheelState.currentSpeedPercent;
+        -: 1003:
+        -: 1004:    //-----------------------------------------
+        -: 1005:    // Clamp acceleration
+        -: 1006:    //-----------------------------------------
+        -: 1007:
+      318: 1008:    if (delta > maximumDelta)
+        -: 1009:    {
+        2: 1010:        wheelCommand.speedPercent =
+        4: 1011:            wheelState.currentSpeedPercent +
+        2: 1012:            maximumDelta;
+        2: 1013:    }
+      322: 1014:}
+        -: 1015:
+        -: 1016://====================================================
+        -: 1017:// Deceleration limiting
+        -: 1018://====================================================
+        -: 1019:
+      322: 1020:void MotorController::applyDecelerationLimits(
+        -: 1021:    WheelCommand &wheelCommand,
+        -: 1022:    WheelState &wheelState,
+        -: 1023:    uint32_t currentTimestampMs)
+        -: 1024:{
+        -: 1025:    //-----------------------------------------
+        -: 1026:    // Delta time
+        -: 1027:    //-----------------------------------------
+        -: 1028:
+      322: 1029:    const float deltaTimeSec =
+        -: 1030:        static_cast<float>(
+      644: 1031:            currentTimestampMs -
+      644: 1032:            wheelState.lastUpdateTimestampMs) /
+        -: 1033:        1000.0f;
+        -: 1034:
+      322: 1035:    if (deltaTimeSec <= 0.0f)
+        -: 1036:    {
+        4: 1037:        return;
+        -: 1038:    }
+        -: 1039:
+        -: 1040:    //-----------------------------------------
+        -: 1041:    // Maximum allowed deceleration
+        -: 1042:    //-----------------------------------------
+        -: 1043:
+      318: 1044:    const float maximumDelta =
+      636: 1045:        m_config.maximumDecelerationPercentPerSec *
+      318: 1046:        deltaTimeSec;
+        -: 1047:
+        -: 1048:    //-----------------------------------------
+        -: 1049:    // Deceleration delta
+        -: 1050:    //-----------------------------------------
+        -: 1051:
+      318: 1052:    const float delta =
+      636: 1053:        wheelState.currentSpeedPercent -
+      318: 1054:        wheelCommand.speedPercent;
+        -: 1055:
+        -: 1056:    //-----------------------------------------
+        -: 1057:    // Clamp deceleration
+        -: 1058:    //-----------------------------------------
+        -: 1059:
+      318: 1060:    if (delta > maximumDelta)
+        -: 1061:    {
+        2: 1062:        wheelCommand.speedPercent =
+        4: 1063:            wheelState.currentSpeedPercent -
+        2: 1064:            maximumDelta;
+        2: 1065:    }
+      322: 1066:}
+        -: 1067:
+        -: 1068://====================================================
+        -: 1069:// Startup boost
+        -: 1070://====================================================
+        -: 1071:
+      354: 1072:void MotorController::applyStartupBoost(
+        -: 1073:    WheelCommand &wheelCommand,
+        -: 1074:    const WheelState &wheelState)
+        -: 1075:{
+      354: 1076:    if (!m_config.enableStartupBoost)
+        -: 1077:    {
+      318: 1078:        return;
+        -: 1079:    }
+        -: 1080:
+        -: 1081:    //-----------------------------------------
+        -: 1082:    // Startup transition
+        -: 1083:    //-----------------------------------------
+        -: 1084:
+        -: 1085:    if (
+       36: 1086:        wheelState.currentSpeedPercent <
+       36: 1087:            0.01f &&
+       34: 1088:        wheelCommand.speedPercent > 0.0f)
+        -: 1089:    {
+        8: 1090:        wheelCommand.speedPercent =
+        8: 1091:            std::max(
+        8: 1092:                wheelCommand.speedPercent,
+        8: 1093:                m_config.minimumEffectiveSpeedPercent);
+        8: 1094:    }
+      354: 1095:}
+        -: 1096:
+        -: 1097://====================================================
+        -: 1098:// Deadzone compensation
+        -: 1099://====================================================
+        -: 1100:
+      354: 1101:void MotorController::applyDeadzoneCompensation(
+        -: 1102:    WheelCommand &wheelCommand)
+        -: 1103:{
+        -: 1104:    //-----------------------------------------
+        -: 1105:    // Deadzone
+        -: 1106:    //-----------------------------------------
+        -: 1107:
+        -: 1108:    if (
+      354: 1109:        wheelCommand.speedPercent > 0.0f &&
+      636: 1110:        wheelCommand.speedPercent <
+      318: 1111:            m_config.minimumEffectiveSpeedPercent)
+        -: 1112:    {
+        4: 1113:        wheelCommand.speedPercent =
+        4: 1114:            m_config.minimumEffectiveSpeedPercent;
+        4: 1115:    }
+      354: 1116:}
+        -: 1117:
+        -: 1118://====================================================
+        -: 1119:// Coordinated braking
+        -: 1120://====================================================
+        -: 1121:
+      177: 1122:void MotorController::applyCoordinatedBraking(
+        -: 1123:    WheelCommand &leftWheelCommand,
+        -: 1124:    WheelCommand &rightWheelCommand)
+        -: 1125:{
+      177: 1126:    if (!m_config.enableCoordinatedBraking)
+        -: 1127:    {
+    #####: 1128:        return;
+        -: 1129:    }
+        -: 1130:
+        -: 1131:    //-----------------------------------------
+        -: 1132:    // Both wheels stopped
+        -: 1133:    //-----------------------------------------
+        -: 1134:
+        -: 1135:    if (
+      177: 1136:        leftWheelCommand.speedPercent <= 0.01f &&
+       20: 1137:        rightWheelCommand.speedPercent <= 0.01f)
+        -: 1138:    {
+       20: 1139:        leftWheelCommand.brakeMode =
+        -: 1140:            BrakeMode::Active;
+        -: 1141:
+       20: 1142:        rightWheelCommand.brakeMode =
+        -: 1143:            BrakeMode::Active;
+        -: 1144:
+       20: 1145:        m_memory.coordinatedBrakingActive =
+        -: 1146:            true;
+       20: 1147:    }
+        -: 1148:    else
+        -: 1149:    {
+      157: 1150:        m_memory.coordinatedBrakingActive =
+        -: 1151:            false;
+        -: 1152:    }
+      177: 1153:}
+        -: 1154:
+        -: 1155://====================================================
+        -: 1156:// Emergency behavior
+        -: 1157://====================================================
+        -: 1158:
+        4: 1159:void MotorController::applyEmergencyBehavior(
+        -: 1160:    WheelCommand &leftWheelCommand,
+        -: 1161:    WheelCommand &rightWheelCommand)
+        -: 1162:{
+        -: 1163:    //-----------------------------------------
+        -: 1164:    // Emergency braking
+        -: 1165:    //-----------------------------------------
+        -: 1166:
+        4: 1167:    leftWheelCommand.speedPercent =
+        -: 1168:        0.0f;
+        -: 1169:
+        4: 1170:    rightWheelCommand.speedPercent =
+        -: 1171:        0.0f;
+        -: 1172:
+        -: 1173:    //-----------------------------------------
+        -: 1174:    // Emergency brake flag
+        -: 1175:    //-----------------------------------------
+        -: 1176:
+        4: 1177:    leftWheelCommand.emergencyBrake =
+        -: 1178:        true;
+        -: 1179:
+        4: 1180:    rightWheelCommand.emergencyBrake =
+        -: 1181:        true;
+        -: 1182:
+        -: 1183:    //-----------------------------------------
+        -: 1184:    // Active braking
+        -: 1185:    //-----------------------------------------
+        -: 1186:
+        4: 1187:    leftWheelCommand.brakeMode =
+        -: 1188:        BrakeMode::Active;
+        -: 1189:
+        4: 1190:    rightWheelCommand.brakeMode =
+        -: 1191:        BrakeMode::Active;
+        4: 1192:}
+        -: 1193:
+        -: 1194://====================================================
+        -: 1195:// Reverse transition validation
+        -: 1196://====================================================
+        -: 1197:
+      354: 1198:bool MotorController::validateReverseTransition(
+        -: 1199:    const WheelCommand &wheelCommand,
+        -: 1200:    const WheelState &wheelState) const
+        -: 1201:{
+        -: 1202:    //-----------------------------------------
+        -: 1203:    // Safe reverse disabled
+        -: 1204:    //-----------------------------------------
+        -: 1205:
+      354: 1206:    if (!m_config.enableSafeReverseTransition)
+        -: 1207:    {
+        6: 1208:        return true;
+        -: 1209:    }
+        -: 1210:
+        -: 1211:    //-----------------------------------------
+        -: 1212:    // Current direction
+        -: 1213:    //-----------------------------------------
+        -: 1214:
+      348: 1215:    const MotorDirection currentDirection =
+      348: 1216:        wheelState.currentDirection;
+        -: 1217:
+        -: 1218:    //-----------------------------------------
+        -: 1219:    // New direction
+        -: 1220:    //-----------------------------------------
+        -: 1221:
+      348: 1222:    const MotorDirection newDirection =
+      348: 1223:        wheelCommand.direction;
+        -: 1224:
+        -: 1225:    //-----------------------------------------
+        -: 1226:    // Prevent instant reversal
+        -: 1227:    //-----------------------------------------
+        -: 1228:
+        -: 1229:    if (
+      348: 1230:        currentDirection ==
+      348: 1231:            MotorDirection::Forward &&
+      268: 1232:        newDirection ==
+        -: 1233:            MotorDirection::Reverse)
+        -: 1234:    {
+        2: 1235:        return (
+        2: 1236:            wheelState.currentSpeedPercent <
+        -: 1237:            0.1f);
+        -: 1238:    }
+        -: 1239:
+        -: 1240:    //-----------------------------------------
+        -: 1241:    // Reverse → forward
+        -: 1242:    //-----------------------------------------
+        -: 1243:
+        -: 1244:    if (
+      346: 1245:        currentDirection ==
+      346: 1246:            MotorDirection::Reverse &&
+        2: 1247:        newDirection ==
+        -: 1248:            MotorDirection::Forward)
+        -: 1249:    {
+        2: 1250:        return (
+        2: 1251:            wheelState.currentSpeedPercent <
+        -: 1252:            0.1f);
+        -: 1253:    }
+        -: 1254:
+      344: 1255:    return true;
+      354: 1256:}
+        -: 1257:
+        -: 1258://====================================================
+        -: 1259:// Driver command generation
+        -: 1260://====================================================
+        -: 1261:
+        -: 1262:MotorDriverCommand
+      354: 1263:MotorController::generateMotorDriverCommand(
+        -: 1264:    MotorChannel channel,
+        -: 1265:    const WheelCommand &wheelCommand,
+        -: 1266:    uint32_t sequenceId) const
+        -: 1267:{
+      354: 1268:    MotorDriverCommand command;
+        -: 1269:
+      354: 1270:    command.channel = channel;
+      354: 1271:    command.direction = wheelCommand.direction;
+      354: 1272:    command.brakeMode = wheelCommand.brakeMode;
+      354: 1273:    command.normalizedSpeed = wheelCommand.speedPercent;
+      354: 1274:    command.enabled = wheelCommand.enabled;
+      354: 1275:    command.emergencyStop = wheelCommand.emergencyBrake;
+      354: 1276:    command.sequenceId = sequenceId;
+        -: 1277:
+      354: 1278:    return command;
+        -: 1279:}
+        -: 1280:
+        -: 1281://====================================================
+        -: 1282:// Execute wheel commands
+        -: 1283://====================================================
+        -: 1284:
+      177: 1285:void MotorController::executeWheelCommands(
+        -: 1286:    const MotorDriverCommand &leftCommand,
+        -: 1287:    const MotorDriverCommand &rightCommand)
+        -: 1288:{
+        -: 1289:    //-----------------------------------------
+        -: 1290:    // Synchronized driver execution
+        -: 1291:    //-----------------------------------------
+        -: 1292:
+      354: 1293:    m_motorDriver.executeDualCommand(
+      177: 1294:        leftCommand,
+      177: 1295:        rightCommand);
+      177: 1296:}
+        -: 1297:
+        -: 1298://====================================================
+        -: 1299:// Runtime state transition
+        -: 1300://====================================================
+        -: 1301:
+      364: 1302:void MotorController::transitionToState(
+        -: 1303:    MotorState newState)
+        -: 1304:{
+        -: 1305:    //-----------------------------------------
+        -: 1306:    // Validate transition
+        -: 1307:    //-----------------------------------------
+        -: 1308:
+        -: 1309:    if (
+      364: 1310:        !validateStateTransition(
+      364: 1311:            m_memory.currentState,
+      364: 1312:            newState))
+        -: 1313:    {
+        6: 1314:        return;
+        -: 1315:    }
+        -: 1316:
+        -: 1317:    //-----------------------------------------
+        -: 1318:    // Previous state
+        -: 1319:    //-----------------------------------------
+        -: 1320:
+      358: 1321:    m_memory.previousState =
+      358: 1322:        m_memory.currentState;
+        -: 1323:
+        -: 1324:    //-----------------------------------------
+        -: 1325:    // Current state
+        -: 1326:    //-----------------------------------------
+        -: 1327:
+      358: 1328:    m_memory.currentState =
+      358: 1329:        newState;
+        -: 1330:
+        -: 1331:    //-----------------------------------------
+        -: 1332:    // Timestamp
+        -: 1333:    //-----------------------------------------
+        -: 1334:
+      358: 1335:    m_memory.lastStateTransitionTimestampMs = Timer::milliseconds(m_timer);
+      364: 1336:}
+        -: 1337:
+        -: 1338://====================================================
+        -: 1339:// State transition validation
+        -: 1340://====================================================
+        -: 1341:
+      364: 1342:bool MotorController::validateStateTransition(
+        -: 1343:    MotorState currentState,
+        -: 1344:    MotorState newState) const
+        -: 1345:{
+        -: 1346:    //-----------------------------------------
+        -: 1347:    // Fault protection
+        -: 1348:    //-----------------------------------------
+        -: 1349:
+        -: 1350:    if (
+      364: 1351:        currentState ==
+      364: 1352:            MotorState::Fault &&
+        6: 1353:        newState !=
+        -: 1354:            MotorState::Idle)
+        -: 1355:    {
+        3: 1356:        return false;
+        -: 1357:    }
+        -: 1358:
+        -: 1359:    //-----------------------------------------
+        -: 1360:    // Emergency protection
+        -: 1361:    //-----------------------------------------
+        -: 1362:
+        -: 1363:    if (
+      361: 1364:        currentState ==
+      361: 1365:            MotorState::EmergencyStop &&
+       14: 1366:        newState !=
+        -: 1367:            MotorState::Idle)
+        -: 1368:    {
+        3: 1369:        return false;
+        -: 1370:    }
+        -: 1371:
+      358: 1372:    return true;
+      364: 1373:}
+        -: 1374:
+        -: 1375://====================================================
+        -: 1376:// Runtime state determination
+        -: 1377://====================================================
+        -: 1378:
+        -: 1379:MotorState
+      177: 1380:MotorController::determineMotorState(
+        -: 1381:    const MotionCommand &motionCommand) const
+        -: 1382:{
+        -: 1383:    //-----------------------------------------
+        -: 1384:    // Emergency braking
+        -: 1385:    //-----------------------------------------
+        -: 1386:
+        -: 1387:    if (
+      177: 1388:        motionCommand.emergencyBrakingActive)
+        -: 1389:    {
+        4: 1390:        return MotorState::EmergencyStop;
+        -: 1391:    }
+        -: 1392:
+        -: 1393:    //-----------------------------------------
+        -: 1394:    // Braking
+        -: 1395:    //-----------------------------------------
+        -: 1396:
+        -: 1397:    if (
+      173: 1398:        motionCommand.brakingActive)
+        -: 1399:    {
+        1: 1400:        return MotorState::Braking;
+        -: 1401:    }
+        -: 1402:
+        -: 1403:    //-----------------------------------------
+        -: 1404:    // Average wheel speed
+        -: 1405:    //-----------------------------------------
+        -: 1406:
+      172: 1407:    const float averageSpeed =
+      172: 1408:        (std::fabs(
+      344: 1409:             motionCommand.leftWheelSpeed) +
+      172: 1410:         std::fabs(
+      344: 1411:             motionCommand.rightWheelSpeed)) *
+        -: 1412:        0.5f;
+        -: 1413:
+        -: 1414:    //-----------------------------------------
+        -: 1415:    // Idle
+        -: 1416:    //-----------------------------------------
+        -: 1417:
+      172: 1418:    if (averageSpeed <= 0.01f)
+        -: 1419:    {
+       14: 1420:        return MotorState::Idle;
+        -: 1421:    }
+        -: 1422:
+        -: 1423:    //-----------------------------------------
+        -: 1424:    // Reverse
+        -: 1425:    //-----------------------------------------
+        -: 1426:
+        -: 1427:    if (
+      158: 1428:        motionCommand.reverseMotionActive)
+        -: 1429:    {
+        3: 1430:        return MotorState::Reverse;
+        -: 1431:    }
+        -: 1432:
+        -: 1433:    //-----------------------------------------
+        -: 1434:    // Accelerating
+        -: 1435:    //-----------------------------------------
+        -: 1436:
+      155: 1437:    if (averageSpeed < 0.3f)
+        -: 1438:    {
+        4: 1439:        return MotorState::Accelerating;
+        -: 1440:    }
+        -: 1441:
+        -: 1442:    //-----------------------------------------
+        -: 1443:    // Cruising
+        -: 1444:    //-----------------------------------------
+        -: 1445:
+      151: 1446:    return MotorState::Cruising;
+      177: 1447:}
+        -: 1448:
+        -: 1449://====================================================
+        -: 1450:// Fault handling
+        -: 1451://====================================================
+        -: 1452:
+       15: 1453:void MotorController::handleFault(
+        -: 1454:    const char *reason)
+        -: 1455:{
+        -: 1456:    //-----------------------------------------
+        -: 1457:    // Already faulted
+        -: 1458:    //-----------------------------------------
+        -: 1459:
+       15: 1460:    if (m_memory.faultActive)
+        -: 1461:    {
+        8: 1462:        return;
+        -: 1463:    }
+        -: 1464:
+        -: 1465:    //-----------------------------------------
+        -: 1466:    // Runtime fault state
+        -: 1467:    //-----------------------------------------
+        -: 1468:
+        7: 1469:    m_memory.faultActive =
+        -: 1470:        true;
+        -: 1471:
+        -: 1472:    //-----------------------------------------
+        -: 1473:    // Runtime state
+        -: 1474:    //-----------------------------------------
+        -: 1475:
+        7: 1476:    transitionToState(
+        -: 1477:        MotorState::Fault);
+        -: 1478:
+        -: 1479:    //-----------------------------------------
+        -: 1480:    // Emergency stop
+        -: 1481:    //-----------------------------------------
+        -: 1482:
+        7: 1483:    m_motorDriver.emergencyStop();
+        -: 1484:
+        -: 1485:    //-----------------------------------------
+        -: 1486:    // Logging
+        -: 1487:    //-----------------------------------------
+        -: 1488:
+        7: 1489:    Logger::error(
+        7: 1490:        m_logger,
+        7: 1491:        TAG,
+        -: 1492:        "MotorController fault: %s",
+        7: 1493:        reason);
+       15: 1494:}
+        -: 1495:
+        -: 1496://====================================================
+        -: 1497:// Motion timeout supervision
+        -: 1498://====================================================
+        -: 1499:
+      642: 1500:bool MotorController::hasMotionTimedOut(
+        -: 1501:    uint32_t currentTimestampMs) const
+        -: 1502:{
+        -: 1503:    //-----------------------------------------
+        -: 1504:    // No command received yet
+        -: 1505:    //-----------------------------------------
+        -: 1506:
+        -: 1507:    if (
+      642: 1508:        m_memory.lastCommandTimestampMs ==
+        -: 1509:        0)
+        -: 1510:    {
+       83: 1511:        return false;
+        -: 1512:    }
+        -: 1513:
+        -: 1514:    //-----------------------------------------
+        -: 1515:    // Timeout validation
+        -: 1516:    //-----------------------------------------
+        -: 1517:
+      559: 1518:    return (
+        -: 1519:        (
+     1118: 1520:            currentTimestampMs -
+     1118: 1521:            m_memory.lastCommandTimestampMs) >
+      559: 1522:        m_config.motorCommandTimeoutMs);
+      642: 1523:}
+        -: 1524:
+        -: 1525://====================================================
+        -: 1526:// Runtime monitoring
+        -: 1527://====================================================
+        -: 1528:
+      642: 1529:void MotorController::performRuntimeMonitoring(
+        -: 1530:    uint32_t currentTimestampMs)
+        -: 1531:{
+        -: 1532:    (void)currentTimestampMs;
+        -: 1533:
+        -: 1534:    //-----------------------------------------
+        -: 1535:    // Driver fault monitoring
+        -: 1536:    //-----------------------------------------
+        -: 1537:
+      642: 1538:    if (m_motorDriver.hasFault())
+        -: 1539:    {
+        8: 1540:        handleFault(
+        -: 1541:            "Runtime driver fault");
+        8: 1542:    }
+      642: 1543:}
+        -: 1544:
+        -: 1545://====================================================
+        -: 1546:// Update wheel runtime state
+        -: 1547://====================================================
+        -: 1548:
+      354: 1549:void MotorController::updateWheelState(
+        -: 1550:    WheelState &wheelState,
+        -: 1551:    const WheelCommand &wheelCommand,
+        -: 1552:    uint32_t currentTimestampMs)
+        -: 1553:{
+        -: 1554:    //-----------------------------------------
+        -: 1555:    // Speed
+        -: 1556:    //-----------------------------------------
+        -: 1557:
+      354: 1558:    wheelState.currentSpeedPercent =
+      354: 1559:        wheelCommand.speedPercent;
+        -: 1560:
+        -: 1561:    //-----------------------------------------
+        -: 1562:    // Target speed
+        -: 1563:    //-----------------------------------------
+        -: 1564:
+      354: 1565:    wheelState.targetSpeedPercent =
+      354: 1566:        wheelCommand.speedPercent;
+        -: 1567:
+        -: 1568:    //-----------------------------------------
+        -: 1569:    // Direction
+        -: 1570:    //-----------------------------------------
+        -: 1571:
+      354: 1572:    wheelState.currentDirection =
+      354: 1573:        wheelCommand.direction;
+        -: 1574:
+        -: 1575:    //-----------------------------------------
+        -: 1576:    // Brake state
+        -: 1577:    //-----------------------------------------
+        -: 1578:
+      354: 1579:    wheelState.currentBrakeMode =
+      354: 1580:        wheelCommand.brakeMode;
+        -: 1581:
+        -: 1582:    //-----------------------------------------
+        -: 1583:    // Braking runtime
+        -: 1584:    //-----------------------------------------
+        -: 1585:
+      354: 1586:    wheelState.brakingActive =
+      354: 1587:        (wheelCommand.brakeMode !=
+        -: 1588:         BrakeMode::Coast);
+        -: 1589:
+        -: 1590:    //-----------------------------------------
+        -: 1591:    // Emergency runtime
+        -: 1592:    //-----------------------------------------
+        -: 1593:
+      354: 1594:    wheelState.emergencyBrakeActive =
+      354: 1595:        wheelCommand.emergencyBrake;
+        -: 1596:
+        -: 1597:    //-----------------------------------------
+        -: 1598:    // Enabled
+        -: 1599:    //-----------------------------------------
+        -: 1600:
+      354: 1601:    wheelState.enabled =
+      354: 1602:        wheelCommand.enabled;
+        -: 1603:
+        -: 1604:    //-----------------------------------------
+        -: 1605:    // Timestamp
+        -: 1606:    //-----------------------------------------
+        -: 1607:
+      354: 1608:    wheelState.lastUpdateTimestampMs =
+      354: 1609:        currentTimestampMs;
+      354: 1610:}
+        -: 1611:
+        -: 1612://====================================================
+        -: 1613:// Runtime memory update
+        -: 1614://====================================================
+        -: 1615:
+      177: 1616:void MotorController::updateRuntimeMemory(
+        -: 1617:    const MotionCommand &motionCommand,
+        -: 1618:    uint32_t currentTimestampMs)
+        -: 1619:{
+      177: 1620:    (void)motionCommand;
+        -: 1621:
+        -: 1622:    //-----------------------------------------
+        -: 1623:    // Timestamp
+        -: 1624:    //-----------------------------------------
+        -: 1625:
+      177: 1626:    m_memory.lastCommandTimestampMs =
+      177: 1627:        currentTimestampMs;
+        -: 1628:
+        -: 1629:    //-----------------------------------------
+        -: 1630:    // Sequence ID
+        -: 1631:    //-----------------------------------------
+        -: 1632:
+      177: 1633:    m_memory.currentSequenceId =
+      177: 1634:        m_sequenceCounter;
+        -: 1635:
+        -: 1636:    //-----------------------------------------
+        -: 1637:    // Runtime execution
+        -: 1638:    //-----------------------------------------
+        -: 1639:
+      177: 1640:    m_memory.motionExecutionActive =
+        -: 1641:        true;
+      177: 1642:}
+        -: 1643:
+        -: 1644://====================================================
+        -: 1645:// Skip ultra-fast updates
+        -: 1646://====================================================
+        -: 1647:
+      643: 1648:bool MotorController::shouldSkipUpdate(uint32_t currentTimestampMs) const
+        -: 1649:{
+        -: 1650:    //-----------------------------------------
+        -: 1651:    // Minimum update interval
+        -: 1652:    //-----------------------------------------
+        -: 1653:
+      643: 1654:    constexpr uint32_t minimumUpdateIntervalMs =
+        -: 1655:        2;
+        -: 1656:
+      643: 1657:    return (
+        -: 1658:        (
+     1286: 1659:            currentTimestampMs -
+     1286: 1660:            m_memory.lastSynchronizationTimestampMs) <
+        -: 1661:        minimumUpdateIntervalMs);
+        -: 1662:}

@@ -1,0 +1,98 @@
+        -:    0:Source:lib/shared/core/robot/include/RobotControllerMemory.hpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcda
+        -:    0:Runs:1
+        -:    1://====================================================
+        -:    2:// File: RobotControllerMemory.hpp
+        -:    3://====================================================
+        -:    4:
+        -:    5:#pragma once
+        -:    6:
+        -:    7:#include <stdint.h>
+        -:    8:
+        -:    9:#include "EmergencyState.hpp"
+        -:   10:#include "PipelineTiming.hpp"
+        -:   11:#include "RobotBehaviorMode.hpp"
+        -:   12:#include "RobotRuntimeFlags.hpp"
+        -:   13:#include "RobotState.hpp"
+        -:   14:#include "RuntimeStatistics.hpp"
+        -:   15:#include "SystemHealth.hpp"
+        -:   16:
+        -:   17://====================================================
+        -:   18:// RobotControllerMemory
+        -:   19://====================================================
+        -:   20://
+        -:   21:// Global robotics runtime memory.
+        -:   22://
+        -:   23:// Tracks:
+        -:   24://      robot runtime state
+        -:   25://      pipeline execution
+        -:   26://      emergency runtime
+        -:   27://      fault runtime
+        -:   28://      timing state
+        -:   29://      runtime statistics
+        -:   30://
+        -:   31://====================================================
+        -:   32:
+       72:   33:struct RobotControllerMemory
+        -:   34:{
+        -:   35:    // Current robot runtime state
+       36:   36:    RobotState currentState = RobotState::Booting;
+        -:   37:
+        -:   38:    // Previous robot state
+       36:   39:    RobotState previousState = RobotState::Booting;
+        -:   40:
+        -:   41:    // Current behavior mode
+       36:   42:    RobotBehaviorMode behaviorMode = RobotBehaviorMode::Balanced;
+        -:   43:
+        -:   44:    // Runtime flags
+        -:   45:    RobotRuntimeFlags runtimeFlags;
+        -:   46:
+        -:   47:    // Global system health
+        -:   48:    SystemHealth systemHealth;
+        -:   49:
+        -:   50:    // Emergency runtime state
+        -:   51:    EmergencyState emergencyState;
+        -:   52:
+        -:   53:    // Runtime statistics
+        -:   54:    RuntimeStatistics runtimeStatistics;
+        -:   55:
+        -:   56:    // Pipeline timing
+        -:   57:    PipelineTiming pipelineTiming;
+        -:   58:
+        -:   59:    // Runtime active
+       36:   60:    bool runtimeActive = false;
+        -:   61:
+        -:   62:    // Robot initialized
+       36:   63:    bool initialized = false;
+        -:   64:
+        -:   65:    // Sensor data available
+       36:   66:    bool sensorDataAvailable = false;
+        -:   67:
+        -:   68:    // Pipeline execution active
+       36:   69:    bool pipelineExecutionActive = false;
+        -:   70:
+        -:   71:    // Last successful pipeline execution
+       36:   72:    uint32_t lastPipelineTimestampMs = 0;
+        -:   73:
+        -:   74:    // Last runtime update
+       36:   75:    uint32_t lastRuntimeUpdateTimestampMs = 0;
+        -:   76:
+        -:   77:    // Last state transition
+       36:   78:    uint32_t lastStateTransitionTimestampMs = 0;
+        -:   79:
+        -:   80:    // Last healthy runtime timestamp
+       36:   81:    uint32_t lastHealthyRuntimeTimestampMs = 0;
+        -:   82:
+        -:   83:    // Total runtime duration
+       36:   84:    uint64_t totalRuntimeDurationMs = 0;
+        -:   85:
+        -:   86:    // Runtime start timestamp
+       36:   87:    uint32_t runtimeStartTimestampMs = 0;
+        -:   88:
+        -:   89:    // Consecutive pipeline failures
+       36:   90:    uint32_t consecutivePipelineFailures = 0;
+        -:   91:
+        -:   92:    // Consecutive missed cycles
+       36:   93:    uint32_t consecutiveMissedCycles = 0;
+        -:   94:};

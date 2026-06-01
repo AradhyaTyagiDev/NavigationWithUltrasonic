@@ -1,0 +1,1029 @@
+        -:    0:Source:lib/shared/core/robot/src/RobotController.cpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcda
+        -:    0:Runs:1
+        -:    1:
+        -:    2:#include "robot/include/RobotController.hpp"
+        -:    3:
+        -:    4:#include "interfaces/include/logging/LoggerExtensions.hpp"
+        -:    5:#include "interfaces/include/synchronization/LockGuard.hpp"
+        -:    6:
+        -:    7:static const char *TAG =
+        -:    8:    "RobotController";
+        -:    9:
+      108:   10:RobotController::RobotController(
+        -:   11:    IUltrasonicSensor &ultrasonicSensor,
+        -:   12:    UltrasonicFilter &ultrasonicFilter,
+        -:   13:    ObstacleManager &obstacleManager,
+        -:   14:    NavigationManager &navigationManager,
+        -:   15:    MotionPlanner &motionPlanner,
+        -:   16:    MotorController &motorController,
+        -:   17:    IMutex &mutex,
+        -:   18:    ILogger &logger,
+        -:   19:    ITimer &timer,
+        -:   20:    const RobotControllerConfig &config)
+       72:   21:    : m_ultrasonicSensor(
+       36:   22:          ultrasonicSensor),
+        -:   23:
+       72:   24:      m_ultrasonicFilter(
+       36:   25:          ultrasonicFilter),
+        -:   26:
+       72:   27:      m_obstacleManager(
+       36:   28:          obstacleManager),
+        -:   29:
+       72:   30:      m_navigationManager(
+       36:   31:          navigationManager),
+        -:   32:
+       72:   33:      m_motionPlanner(
+       36:   34:          motionPlanner),
+        -:   35:
+       72:   36:      m_motorController(
+       36:   37:          motorController),
+        -:   38:
+       72:   39:      m_mutex(
+       36:   40:          mutex),
+        -:   41:
+       72:   42:      m_logger(
+       36:   43:          logger),
+        -:   44:
+       72:   45:      m_timer(
+       36:   46:          timer),
+        -:   47:
+       36:   48:      m_config(config)
+       36:   49:{
+       72:   50:}
+        -:   51:
+       72:   52:RobotController::~RobotController()
+       36:   53:{
+       36:   54:    shutdown();
+       72:   55:}
+        -:   56:
+       36:   57:bool RobotController::initialize()
+        -:   58:{
+       36:   59:    LockGuard lock(m_mutex);
+        -:   60:
+       36:   61:    if (m_initialized)
+        -:   62:    {
+        1:   63:        return true;
+        -:   64:    }
+        -:   65:
+       35:   66:    transitionToState(
+        -:   67:        RobotState::Initializing);
+        -:   68:
+       35:   69:    if (!m_ultrasonicSensor.initialize())
+        -:   70:    {
+        1:   71:        handleFault(
+        -:   72:            "Ultrasonic sensor init failed");
+        -:   73:
+        1:   74:        return false;
+        -:   75:    }
+        -:   76:
+       34:   77:    if (!m_motorController.initialize())
+        -:   78:    {
+        1:   79:        handleFault(
+        -:   80:            "Motor controller init failed");
+        -:   81:
+        1:   82:        return false;
+        -:   83:    }
+        -:   84:
+       33:   85:    m_memory = {};
+        -:   86:
+       33:   87:    m_memory.behaviorMode =
+       33:   88:        m_config.behaviorMode;
+        -:   89:
+       33:   90:    const uint32_t timestampMs =
+       33:   91:        getCurrentTimestampMs();
+        -:   92:
+       33:   93:    m_memory.runtimeStartTimestampMs =
+       33:   94:        timestampMs;
+        -:   95:
+       33:   96:    m_memory.lastHealthyRuntimeTimestampMs =
+       33:   97:        timestampMs;
+        -:   98:
+       33:   99:    m_initialized = true;
+        -:  100:
+       33:  101:    m_memory.initialized = true;
+        -:  102:
+       33:  103:    transitionToState(
+        -:  104:        RobotState::Active);
+        -:  105:
+       33:  106:    Logger::info(
+       33:  107:        m_logger,
+       33:  108:        TAG,
+        -:  109:        "RobotController initialized");
+        -:  110:
+       33:  111:    return true;
+       36:  112:}
+        -:  113:
+       36:  114:void RobotController::shutdown()
+        -:  115:{
+       36:  116:    stop();
+        -:  117:
+       36:  118:    LockGuard lock(m_mutex);
+        -:  119:
+       36:  120:    m_motorController.shutdown();
+        -:  121:
+       36:  122:    m_ultrasonicSensor.shutdown();
+        -:  123:
+       36:  124:    m_initialized = false;
+        -:  125:
+       36:  126:    m_running = false;
+        -:  127:
+       36:  128:    transitionToState(
+        -:  129:        RobotState::Shutdown);
+        -:  130:
+       36:  131:    Logger::info(
+       36:  132:        m_logger,
+       36:  133:        TAG,
+        -:  134:        "RobotController shutdown");
+       36:  135:}
+        -:  136:
+       31:  137:bool RobotController::start()
+        -:  138:{
+       31:  139:    LockGuard lock(m_mutex);
+        -:  140:
+       31:  141:    if (!m_initialized)
+        -:  142:    {
+        1:  143:        return false;
+        -:  144:    }
+        -:  145:
+       30:  146:    if (m_running)
+        -:  147:    {
+        1:  148:        return true;
+        -:  149:    }
+        -:  150:
+       29:  151:    if (!m_ultrasonicSensor.start())
+        -:  152:    {
+        2:  153:        handleFault(
+        -:  154:            "Ultrasonic sensor start failed");
+        -:  155:
+        2:  156:        return false;
+        -:  157:    }
+        -:  158:
+       27:  159:    m_running = true;
+        -:  160:
+       27:  161:    m_memory.runtimeActive = true;
+        -:  162:
+       27:  163:    transitionToState(
+        -:  164:        RobotState::Active);
+        -:  165:
+       27:  166:    Logger::info(
+       27:  167:        m_logger,
+       27:  168:        TAG,
+        -:  169:        "RobotController started");
+        -:  170:
+       27:  171:    return true;
+       31:  172:}
+        -:  173:
+       37:  174:void RobotController::stop()
+        -:  175:{
+       37:  176:    LockGuard lock(m_mutex);
+        -:  177:
+       37:  178:    if (!m_running)
+        -:  179:    {
+       11:  180:        return;
+        -:  181:    }
+        -:  182:
+       26:  183:    m_running = false;
+        -:  184:
+       26:  185:    m_memory.runtimeActive = false;
+        -:  186:
+       26:  187:    m_motorController.stop();
+        -:  188:
+       26:  189:    transitionToState(
+        -:  190:        RobotState::Paused);
+        -:  191:
+       26:  192:    Logger::info(
+       26:  193:        m_logger,
+       26:  194:        TAG,
+        -:  195:        "RobotController stopped");
+       37:  196:}
+        -:  197:
+      178:  198:void RobotController::update()
+        -:  199:{
+      178:  200:    if (!m_mutex.tryLock())
+        -:  201:    {
+        1:  202:        return;
+        -:  203:    }
+        -:  204:
+      177:  205:    if (!m_initialized || !m_running)
+        -:  206:    {
+        1:  207:        m_mutex.unlock();
+        -:  208:
+        1:  209:        return;
+        -:  210:    }
+        -:  211:
+      176:  212:    const uint32_t currentTimestampMs =
+      176:  213:        getCurrentTimestampMs();
+        -:  214:
+      176:  215:    executePipeline(
+      176:  216:        currentTimestampMs);
+        -:  217:
+      176:  218:    m_mutex.unlock();
+      178:  219:}
+        -:  220:
+      176:  221:void RobotController::executePipeline(
+        -:  222:    uint32_t currentTimestampMs)
+        -:  223:{
+        -:  224:
+      176:  225:    beginPipelineTiming(
+      176:  226:        currentTimestampMs);
+        -:  227:
+      176:  228:    m_memory.runtimeStatistics
+      176:  229:        .totalControlLoops++;
+        -:  230:
+      176:  231:    executeSensorStage(
+      176:  232:        currentTimestampMs);
+        -:  233:
+      176:  234:    executeFilterStage(
+      176:  235:        currentTimestampMs);
+        -:  236:
+      176:  237:    executeObstacleStage(
+      176:  238:        currentTimestampMs);
+        -:  239:
+      176:  240:    executeNavigationStage(
+      176:  241:        currentTimestampMs);
+        -:  242:
+      176:  243:    executeMotionStage(
+      176:  244:        currentTimestampMs);
+        -:  245:
+      176:  246:    executeMotorStage(
+      176:  247:        currentTimestampMs);
+        -:  248:
+      176:  249:    executeMonitoringStage(
+      176:  250:        currentTimestampMs);
+        -:  251:
+      176:  252:    updateRuntimeMemory(
+      176:  253:        currentTimestampMs);
+        -:  254:
+      176:  255:    endPipelineTiming(
+      176:  256:        currentTimestampMs);
+        -:  257:
+      176:  258:    m_memory.runtimeStatistics
+      176:  259:        .successfulControlLoops++;
+      176:  260:}
+        -:  261:
+      176:  262:void RobotController::executeSensorStage(uint32_t currentTimestampMs)
+        -:  263:{
+      176:  264:    const uint32_t startUs = getCurrentTimestampUs();
+        -:  265:
+      176:  266:    UltrasonicSensorData latestData;
+        -:  267:
+      176:  268:    const bool received = m_ultrasonicSensor.fetchLatestData(latestData);
+        -:  269:
+      176:  270:    if (received)
+        -:  271:    {
+      152:  272:        m_latestSensorData = latestData;
+        -:  273:
+      152:  274:        m_memory.sensorDataAvailable = true;
+        -:  275:
+      152:  276:        m_memory.runtimeStatistics.sensorUpdates++;
+        -:  277:
+      152:  278:        m_memory.runtimeFlags.sensorTimeoutActive = false;
+        -:  279:
+      152:  280:        m_memory.lastHealthyRuntimeTimestampMs = currentTimestampMs;
+      152:  281:    }
+        -:  282:    else
+        -:  283:    {
+       24:  284:        m_memory.sensorDataAvailable = false;
+        -:  285:
+       24:  286:        const uint32_t elapsedMs = currentTimestampMs - m_latestSensorData.timestampMs;
+        -:  287:
+       24:  288:        if (elapsedMs > m_config.sensorTimeoutMs)
+        -:  289:        {
+       13:  290:            m_memory.runtimeFlags.sensorTimeoutActive = true;
+        -:  291:
+       13:  292:            m_memory.systemHealth.sensorHealthy = false;
+        -:  293:
+       13:  294:            m_memory.runtimeStatistics.sensorTimeouts++;
+       13:  295:        }
+        -:  296:    }
+        -:  297:
+      176:  298:    m_memory.pipelineTiming.sensorStageDurationUs =
+      352:  299:        getCurrentTimestampUs() -
+      176:  300:        startUs;
+      176:  301:}
+        -:  302:
+      176:  303:void RobotController::executeFilterStage(uint32_t currentTimestampMs)
+        -:  304:{
+      176:  305:    const uint32_t startUs = getCurrentTimestampUs();
+        -:  306:
+      176:  307:    if (!m_memory.sensorDataAvailable)
+        -:  308:    {
+       24:  309:        return;
+        -:  310:    }
+        -:  311:
+      152:  312:    m_latestFilteredData =
+      304:  313:        m_ultrasonicFilter.process(
+      152:  314:            m_latestSensorData.pulseWidthUs,
+      152:  315:            m_latestSensorData.timestampMs);
+        -:  316:
+      152:  317:    m_memory.pipelineTiming
+      152:  318:        .filterStageDurationUs =
+      304:  319:        getCurrentTimestampUs() -
+      152:  320:        startUs;
+        -:  321:
+        -:  322:    (void)currentTimestampMs;
+      176:  323:}
+        -:  324:
+      176:  325:void RobotController::executeObstacleStage(
+        -:  326:    uint32_t currentTimestampMs)
+        -:  327:{
+      176:  328:    const uint64_t startUs =
+      176:  329:        getCurrentTimestampUs();
+        -:  330:
+      176:  331:    if (!m_memory.sensorDataAvailable)
+        -:  332:    {
+       24:  333:        return;
+        -:  334:    }
+        -:  335:
+      152:  336:    m_latestObstacleAnalysis =
+      304:  337:        m_obstacleManager.process(
+      152:  338:            m_latestFilteredData,
+      152:  339:            currentTimestampMs);
+        -:  340:
+      152:  341:    m_memory.runtimeStatistics
+      152:  342:        .obstacleAnalyses++;
+        -:  343:
+      152:  344:    m_memory.pipelineTiming
+      152:  345:        .obstacleStageDurationUs =
+      304:  346:        getCurrentTimestampUs() -
+      152:  347:        startUs;
+      176:  348:}
+        -:  349:
+      176:  350:void RobotController::executeNavigationStage(
+        -:  351:    uint32_t currentTimestampMs)
+        -:  352:{
+      176:  353:    const uint64_t startUs =
+      176:  354:        getCurrentTimestampUs();
+        -:  355:
+      176:  356:    m_latestNavigationDecision =
+      352:  357:        m_navigationManager.process(
+      176:  358:            m_latestObstacleAnalysis,
+      176:  359:            currentTimestampMs);
+        -:  360:
+      176:  361:    m_memory.runtimeStatistics
+      176:  362:        .navigationDecisions++;
+        -:  363:
+      176:  364:    m_memory.pipelineTiming
+      176:  365:        .navigationStageDurationUs =
+      352:  366:        getCurrentTimestampUs() -
+      176:  367:        startUs;
+      176:  368:}
+        -:  369:
+      176:  370:void RobotController::executeMotionStage(
+        -:  371:    uint32_t currentTimestampMs)
+        -:  372:{
+      176:  373:    const uint64_t startUs =
+      176:  374:        getCurrentTimestampUs();
+        -:  375:
+      176:  376:    m_latestMotionCommand =
+      352:  377:        m_motionPlanner.process(
+      176:  378:            m_latestNavigationDecision,
+      176:  379:            currentTimestampMs);
+        -:  380:
+      176:  381:    m_memory.runtimeStatistics
+      176:  382:        .motionPlans++;
+        -:  383:
+      176:  384:    m_memory.pipelineTiming
+      176:  385:        .motionStageDurationUs =
+      352:  386:        getCurrentTimestampUs() -
+      176:  387:        startUs;
+      176:  388:}
+        -:  389:
+      176:  390:void RobotController::executeMotorStage(
+        -:  391:    uint32_t currentTimestampMs)
+        -:  392:{
+      176:  393:    if (m_memory.runtimeFlags.emergencyActive)
+        -:  394:    {
+       13:  395:        return;
+        -:  396:    }
+        -:  397:
+      163:  398:    const uint64_t startUs =
+      163:  399:        getCurrentTimestampUs();
+        -:  400:
+      163:  401:    const bool submitted =
+      326:  402:        m_motorController.tryExecuteMotion(
+      163:  403:            m_latestMotionCommand);
+        -:  404:
+      163:  405:    if (!submitted)
+        -:  406:    {
+        2:  407:        m_memory.runtimeStatistics
+        2:  408:            .missedControlCycles++;
+        -:  409:
+        2:  410:        m_memory.consecutiveMissedCycles++;
+        -:  411:
+        2:  412:        m_memory.pipelineTiming
+        2:  413:            .motorStageDurationUs =
+        4:  414:            getCurrentTimestampUs() -
+        2:  415:            startUs;
+        -:  416:
+        2:  417:        return;
+        -:  418:    }
+        -:  419:
+      161:  420:    m_memory.runtimeStatistics
+      161:  421:        .motorExecutions++;
+        -:  422:
+      161:  423:    m_memory.consecutiveMissedCycles = 0;
+        -:  424:
+      161:  425:    m_memory.pipelineTiming
+      161:  426:        .motorStageDurationUs =
+      322:  427:        getCurrentTimestampUs() -
+      161:  428:        startUs;
+        -:  429:
+        -:  430:    (void)currentTimestampMs;
+      176:  431:}
+        -:  432:
+      176:  433:void RobotController::executeMonitoringStage(
+        -:  434:    uint32_t currentTimestampMs)
+        -:  435:{
+      176:  436:    performHealthMonitoring(
+      176:  437:        currentTimestampMs);
+        -:  438:
+      176:  439:    performTimingSupervision(
+      176:  440:        currentTimestampMs);
+        -:  441:
+      176:  442:    performEmergencySupervision(
+      176:  443:        currentTimestampMs);
+        -:  444:
+      176:  445:    performFaultMonitoring(
+      176:  446:        currentTimestampMs);
+        -:  447:
+      176:  448:    updateSystemHealth();
+        -:  449:
+      176:  450:    updateRuntimeStatistics();
+      176:  451:}
+        -:  452:
+      176:  453:void RobotController::performHealthMonitoring(
+        -:  454:    uint32_t currentTimestampMs)
+        -:  455:{
+        -:  456:
+      176:  457:    m_memory.systemHealth
+      176:  458:        .sensorHealthy =
+      176:  459:        !m_memory.runtimeFlags.sensorTimeoutActive &&
+      163:  460:        !m_latestFilteredData.timeoutOccurred;
+        -:  461:
+      176:  462:    m_memory.systemHealth
+      176:  463:        .motorHealthy =
+      176:  464:        !m_motorController.hasFault();
+        -:  465:
+      176:  466:    m_memory.systemHealth
+      176:  467:        .driverHealthy =
+      176:  468:        !m_motorController.hasFault();
+        -:  469:
+      176:  470:    m_memory.systemHealth
+      176:  471:        .systemHealthy =
+      176:  472:        (m_memory.systemHealth
+      176:  473:             .sensorHealthy &&
+      163:  474:         m_memory.systemHealth
+      163:  475:             .motorHealthy &&
+      154:  476:         m_memory.systemHealth
+      154:  477:             .driverHealthy);
+        -:  478:
+        -:  479:    if (
+      352:  480:        m_memory.systemHealth
+      176:  481:            .systemHealthy)
+        -:  482:    {
+      154:  483:        m_memory
+      154:  484:            .lastHealthyRuntimeTimestampMs =
+      154:  485:            currentTimestampMs;
+      154:  486:    }
+      176:  487:}
+        -:  488:
+      176:  489:void RobotController::performTimingSupervision(
+        -:  490:    uint32_t currentTimestampMs)
+        -:  491:{
+        -:  492:    (void)currentTimestampMs;
+        -:  493:
+      176:  494:    const uint32_t loopDurationUs =
+      176:  495:        m_memory.pipelineTiming
+      176:  496:            .controlLoopDurationUs;
+        -:  497:
+        -:  498:    if (
+      176:  499:        hasPipelineTimingViolation(
+      176:  500:            loopDurationUs))
+        -:  501:    {
+        3:  502:        m_memory.runtimeStatistics
+        3:  503:            .timingViolations++;
+        -:  504:
+        3:  505:        m_memory.systemHealth
+        3:  506:            .timingHealthy = false;
+        3:  507:    }
+        -:  508:    else
+        -:  509:    {
+      173:  510:        m_memory.systemHealth
+      173:  511:            .timingHealthy = true;
+        -:  512:    }
+      176:  513:}
+        -:  514:
+      176:  515:void RobotController::performEmergencySupervision(
+        -:  516:    uint32_t currentTimestampMs)
+        -:  517:{
+        -:  518:    (void)currentTimestampMs;
+        -:  519:
+      176:  520:    if (!shouldTriggerEmergency())
+        -:  521:    {
+      163:  522:        return;
+        -:  523:    }
+        -:  524:
+        -:  525:    if (
+       26:  526:        m_latestObstacleAnalysis
+       13:  527:            .emergencyDetected)
+        -:  528:    {
+        7:  529:        triggerEmergency(
+        -:  530:            EmergencySeverity::Critical,
+        -:  531:            EmergencySource::Obstacle,
+        -:  532:            EmergencyCode::
+        -:  533:                ObstacleCollisionRisk);
+        7:  534:    }
+        6:  535:    else if (m_motorController.isEmergencyStopActive())
+        -:  536:    {
+        6:  537:        triggerEmergency(
+        -:  538:            EmergencySeverity::Critical,
+        -:  539:            EmergencySource::Runtime,
+        -:  540:            EmergencyCode::
+        -:  541:                EmergencyStopTriggered);
+        6:  542:    }
+      176:  543:}
+        -:  544:
+      176:  545:void RobotController::performFaultMonitoring(
+        -:  546:    uint32_t currentTimestampMs)
+        -:  547:{
+        -:  548:    (void)currentTimestampMs;
+        -:  549:
+      176:  550:    if (m_memory.systemHealth.faultActive)
+        -:  551:    {
+        6:  552:        recoverFromFault();
+        6:  553:    }
+        -:  554:
+      176:  555:    if (m_motorController.hasFault())
+        -:  556:    {
+        7:  557:        handleFault(
+        -:  558:            "Motor controller fault");
+        7:  559:    }
+      176:  560:}
+        -:  561:
+        2:  562:void RobotController::emergencyStop()
+        -:  563:{
+        2:  564:    LockGuard lock(m_mutex);
+        -:  565:
+        2:  566:    triggerEmergency(
+        -:  567:        EmergencySeverity::Critical,
+        -:  568:        EmergencySource::Runtime,
+        -:  569:        EmergencyCode::
+        -:  570:            EmergencyStopTriggered);
+        2:  571:}
+        -:  572:
+       15:  573:void RobotController::triggerEmergency(
+        -:  574:    EmergencySeverity severity,
+        -:  575:    EmergencySource source,
+        -:  576:    EmergencyCode code)
+        -:  577:{
+       15:  578:    if (m_memory.emergencyState.emergencyActive)
+        -:  579:    {
+        8:  580:        return;
+        -:  581:    }
+        -:  582:
+        7:  583:    m_memory.emergencyState
+        7:  584:        .emergencyActive = true;
+        -:  585:
+        7:  586:    m_memory.emergencyState
+       14:  587:        .severity = severity;
+        -:  588:
+        7:  589:    m_memory.emergencyState
+       14:  590:        .source = source;
+        -:  591:
+        7:  592:    m_memory.emergencyState
+       14:  593:        .code = code;
+        -:  594:
+        7:  595:    m_memory.emergencyState
+        7:  596:        .emergencyStopTriggered =
+        -:  597:        true;
+        -:  598:
+        7:  599:    m_memory.emergencyState
+        7:  600:        .lastEmergencyTimestampMs =
+        7:  601:        getCurrentTimestampMs();
+        -:  602:
+        7:  603:    m_memory.runtimeFlags
+        7:  604:        .emergencyActive = true;
+        -:  605:
+        7:  606:    m_memory.systemHealth
+        7:  607:        .emergencyActive = true;
+        -:  608:
+        7:  609:    m_memory.systemHealth
+        7:  610:        .systemHealthy = false;
+        -:  611:
+        7:  612:    m_memory.runtimeStatistics
+        7:  613:        .emergencyStops++;
+        -:  614:
+        7:  615:    m_motorController
+        7:  616:        .emergencyStop();
+        -:  617:
+        7:  618:    transitionToState(
+        -:  619:        RobotState::Emergency);
+        -:  620:
+        7:  621:    Logger::error(
+        7:  622:        m_logger,
+        7:  623:        TAG,
+        -:  624:        "Emergency triggered");
+       15:  625:}
+        -:  626:
+        2:  627:void RobotController::clearEmergency()
+        -:  628:{
+        2:  629:    LockGuard lock(m_mutex);
+        -:  630:
+        2:  631:    clearEmergencyInternal();
+        2:  632:}
+        -:  633:
+        2:  634:void RobotController::clearEmergencyInternal()
+        -:  635:{
+        -:  636:
+        2:  637:    m_memory.emergencyState =
+        2:  638:        {};
+        -:  639:
+        2:  640:    m_memory.runtimeFlags
+        2:  641:        .emergencyActive = false;
+        -:  642:
+        2:  643:    m_memory.systemHealth
+        2:  644:        .emergencyActive = false;
+        -:  645:
+        2:  646:    m_motorController
+        2:  647:        .clearEmergencyStop();
+        -:  648:
+        2:  649:    transitionToState(
+        -:  650:        RobotState::Active);
+        -:  651:
+        2:  652:    Logger::info(
+        2:  653:        m_logger,
+        2:  654:        TAG,
+        -:  655:        "Emergency cleared");
+        2:  656:}
+        -:  657:
+      176:  658:void RobotController::transitionToState(
+        -:  659:    RobotState newState)
+        -:  660:{
+        -:  661:
+        -:  662:    if (
+      176:  663:        !validateStateTransition(
+      176:  664:            m_memory.currentState,
+      176:  665:            newState))
+        -:  666:    {
+        3:  667:        return;
+        -:  668:    }
+        -:  669:
+      173:  670:    m_memory.previousState =
+      173:  671:        m_memory.currentState;
+        -:  672:
+      173:  673:    m_memory.currentState =
+      173:  674:        newState;
+        -:  675:
+      173:  676:    m_memory.lastStateTransitionTimestampMs =
+      173:  677:        getCurrentTimestampMs();
+      176:  678:}
+        -:  679:
+      176:  680:bool RobotController::validateStateTransition(
+        -:  681:    RobotState currentState,
+        -:  682:    RobotState newState) const
+        -:  683:{
+        -:  684:    //-----------------------------------------
+        -:  685:    // Fault protection
+        -:  686:    //-----------------------------------------
+        -:  687:
+        -:  688:    if (
+      176:  689:        currentState ==
+      176:  690:            RobotState::Fault &&
+       10:  691:        newState !=
+       10:  692:            RobotState::Shutdown &&
+        6:  693:        newState !=
+        -:  694:            RobotState::Paused)
+        -:  695:    {
+        3:  696:        return false;
+        -:  697:    }
+        -:  698:
+      173:  699:    return true;
+      176:  700:}
+        -:  701:
+       11:  702:void RobotController::handleFault(
+        -:  703:    const char *reason)
+        -:  704:{
+       11:  705:    if (m_memory.systemHealth.faultActive)
+        -:  706:    {
+        4:  707:        return;
+        -:  708:    }
+        -:  709:
+        7:  710:    transitionToState(
+        -:  711:        RobotState::Fault);
+        -:  712:
+        7:  713:    m_memory.systemHealth
+        7:  714:        .faultActive = true;
+        -:  715:
+        7:  716:    m_memory.systemHealth
+        7:  717:        .consecutiveFaultCount++;
+        -:  718:
+        7:  719:    m_memory.systemHealth
+        7:  720:        .lastFaultTimestampMs =
+        7:  721:        getCurrentTimestampMs();
+        -:  722:
+        7:  723:    m_memory.runtimeStatistics
+        7:  724:        .totalFaults++;
+        -:  725:
+        7:  726:    m_motorController
+        7:  727:        .emergencyStop();
+        -:  728:
+        7:  729:    Logger::error(
+        7:  730:        m_logger,
+        7:  731:        TAG,
+        -:  732:        "RobotController fault: %s",
+        7:  733:        reason);
+       11:  734:}
+        -:  735:
+      176:  736:void RobotController::beginPipelineTiming(
+        -:  737:    uint32_t currentTimestampMs)
+        -:  738:{
+      176:  739:    m_pipelineStartTimestampUs =
+      176:  740:        getCurrentTimestampUs();
+        -:  741:
+      176:  742:    m_memory.pipelineTiming
+      176:  743:        .lastUpdateTimestampMs =
+      176:  744:        currentTimestampMs;
+      176:  745:}
+        -:  746:
+      176:  747:void RobotController::endPipelineTiming(
+        -:  748:    uint32_t currentTimestampMs)
+        -:  749:{
+      176:  750:    const uint32_t endUs =
+      176:  751:        getCurrentTimestampUs();
+        -:  752:
+      176:  753:    const uint32_t durationUs =
+      352:  754:        endUs -
+      176:  755:        m_pipelineStartTimestampUs;
+        -:  756:
+      176:  757:    m_memory.pipelineTiming
+      176:  758:        .controlLoopDurationUs =
+      176:  759:        durationUs;
+        -:  760:
+        -:  761:    if (
+      352:  762:        durationUs >
+      176:  763:        m_memory.pipelineTiming
+      176:  764:            .worstCaseLoopDurationUs)
+        -:  765:    {
+        5:  766:        m_memory.pipelineTiming
+        5:  767:            .worstCaseLoopDurationUs =
+        5:  768:            durationUs;
+        5:  769:    }
+        -:  770:
+      176:  771:    updatePipelineStatistics(
+      176:  772:        durationUs);
+        -:  773:
+        -:  774:    (void)currentTimestampMs;
+      176:  775:}
+        -:  776:
+      176:  777:void RobotController::updatePipelineStatistics(
+        -:  778:    uint32_t pipelineDurationUs)
+        -:  779:{
+      176:  780:    auto &timing =
+      176:  781:        m_memory.pipelineTiming;
+        -:  782:
+      176:  783:    timing.averageLoopDurationUs =
+      176:  784:        ((
+      352:  785:             timing.averageLoopDurationUs *
+      352:  786:             (m_pipelineExecutionCounter - 1)) +
+      352:  787:         pipelineDurationUs) /
+      176:  788:        m_pipelineExecutionCounter;
+      176:  789:}
+        -:  790:
+      508:  791:bool RobotController::hasPipelineTimingViolation(
+        -:  792:    uint32_t pipelineDurationUs) const
+        -:  793:{
+      508:  794:    return (
+     1016:  795:        pipelineDurationUs >
+      508:  796:        m_config
+      508:  797:            .maximumPipelineDurationUs);
+        -:  798:}
+        -:  799:
+        1:  800:void RobotController::reset()
+        -:  801:{
+        1:  802:    LockGuard lock(m_mutex);
+        -:  803:
+        1:  804:    m_motorController.reset();
+        -:  805:
+        1:  806:    m_memory = {};
+        -:  807:
+        1:  808:    m_latestSensorData = {};
+        1:  809:    m_latestFilteredData = {};
+        1:  810:    m_latestObstacleAnalysis = {};
+        1:  811:    m_latestNavigationDecision = {};
+        1:  812:    m_latestMotionCommand = {};
+        -:  813:
+        1:  814:    m_running = false;
+        1:  815:    m_pipelineExecutionCounter = 0;
+        1:  816:    m_pipelineStartTimestampUs = 0;
+        -:  817:
+        1:  818:    const uint32_t timestampMs =
+        1:  819:        getCurrentTimestampMs();
+        -:  820:
+        1:  821:    m_memory.initialized =
+        1:  822:        m_initialized;
+        -:  823:
+        1:  824:    m_memory.behaviorMode =
+        1:  825:        m_config.behaviorMode;
+        -:  826:
+        1:  827:    m_memory.runtimeStartTimestampMs =
+        1:  828:        timestampMs;
+        -:  829:
+        1:  830:    m_memory.lastHealthyRuntimeTimestampMs =
+        1:  831:        timestampMs;
+        -:  832:
+        1:  833:    transitionToState(
+        1:  834:        m_initialized
+        -:  835:            ? RobotState::Paused
+        -:  836:            : RobotState::Booting);
+        -:  837:
+        1:  838:    Logger::info(
+        1:  839:        m_logger,
+        1:  840:        TAG,
+        -:  841:        "RobotController reset");
+        1:  842:}
+        -:  843:
+      176:  844:bool RobotController::shouldTriggerEmergency() const
+        -:  845:{
+      176:  846:    return (
+      176:  847:        m_latestObstacleAnalysis.emergencyDetected ||
+      169:  848:        m_motorController.isEmergencyStopActive());
+        -:  849:}
+        -:  850:
+        6:  851:void RobotController::recoverFromFault()
+        -:  852:{
+        6:  853:    if (!m_config.enableAutomaticFaultRecovery)
+        -:  854:    {
+    #####:  855:        return;
+        -:  856:    }
+        -:  857:
+        6:  858:    const uint32_t currentTimestampMs =
+        6:  859:        getCurrentTimestampMs();
+        -:  860:
+        6:  861:    const uint32_t elapsedMs =
+       12:  862:        currentTimestampMs -
+        6:  863:        m_memory.systemHealth.lastFaultTimestampMs;
+        -:  864:
+        6:  865:    if (elapsedMs < m_config.faultRecoveryCooldownMs)
+        -:  866:    {
+        4:  867:        return;
+        -:  868:    }
+        -:  869:
+        2:  870:    m_memory.systemHealth.faultActive =
+        -:  871:        false;
+        -:  872:
+        2:  873:    m_memory.systemHealth.consecutiveFaultCount =
+        -:  874:        0;
+        -:  875:
+        2:  876:    m_motorController.reset();
+        -:  877:
+        2:  878:    transitionToState(
+        -:  879:        RobotState::Paused);
+        6:  880:}
+        -:  881:
+      176:  882:bool RobotController::validateRuntimeHealth() const
+        -:  883:{
+      176:  884:    return (
+      176:  885:        validateSubsystemHealth() &&
+      156:  886:        validateTimingHealth() &&
+      153:  887:        validateEmergencyState());
+        -:  888:}
+        -:  889:
+      176:  890:bool RobotController::validateSubsystemHealth() const
+        -:  891:{
+      176:  892:    return (
+      176:  893:        m_memory.systemHealth.sensorHealthy &&
+      163:  894:        !m_motorController.hasFault());
+        -:  895:}
+        -:  896:
+      332:  897:bool RobotController::validateTimingHealth() const
+        -:  898:{
+      332:  899:    return !hasPipelineTimingViolation(
+      332:  900:        m_memory.pipelineTiming
+      332:  901:            .controlLoopDurationUs);
+        -:  902:}
+        -:  903:
+      153:  904:bool RobotController::validateEmergencyState() const
+        -:  905:{
+      306:  906:    return !m_memory.emergencyState
+      153:  907:                .emergencyActive;
+        -:  908:}
+        -:  909:
+        -:  910:const RobotControllerMemory &
+       17:  911:RobotController::getMemory() const
+        -:  912:{
+       17:  913:    return m_memory;
+        -:  914:}
+        -:  915:
+        -:  916:const SystemHealth &
+       12:  917:RobotController::getSystemHealth() const
+        -:  918:{
+       12:  919:    return m_memory.systemHealth;
+        -:  920:}
+        -:  921:
+        -:  922:RobotState
+        8:  923:RobotController::getCurrentState() const
+        -:  924:{
+        8:  925:    return m_memory.currentState;
+        -:  926:}
+        -:  927:
+        5:  928:bool RobotController::isRunning() const
+        -:  929:{
+        5:  930:    return m_running;
+        -:  931:}
+        -:  932:
+        9:  933:bool RobotController::isEmergencyActive() const
+        -:  934:{
+       18:  935:    return m_memory
+        9:  936:        .emergencyState
+        9:  937:        .emergencyActive;
+        -:  938:}
+        -:  939:
+       11:  940:bool RobotController::hasFault() const
+        -:  941:{
+       22:  942:    return m_memory
+       11:  943:        .systemHealth
+       11:  944:        .faultActive;
+        -:  945:}
+        -:  946:
+        -:  947:RobotBehaviorMode
+        1:  948:RobotController::getBehaviorMode() const
+        -:  949:{
+        1:  950:    return m_memory.behaviorMode;
+        -:  951:}
+        -:  952:
+        1:  953:void RobotController::setBehaviorMode(
+        -:  954:    RobotBehaviorMode mode)
+        -:  955:{
+        1:  956:    m_memory.behaviorMode =
+        1:  957:        mode;
+        1:  958:}
+        -:  959:
+      176:  960:void RobotController::updateRuntimeMemory(
+        -:  961:    uint32_t currentTimestampMs)
+        -:  962:{
+        -:  963:
+      176:  964:    m_memory.lastRuntimeUpdateTimestampMs =
+      176:  965:        currentTimestampMs;
+        -:  966:
+      176:  967:    m_memory.lastPipelineTimestampMs =
+      176:  968:        currentTimestampMs;
+        -:  969:
+      176:  970:    m_memory.totalRuntimeDurationMs =
+      352:  971:        currentTimestampMs -
+      176:  972:        m_memory.runtimeStartTimestampMs;
+        -:  973:
+      176:  974:    m_pipelineExecutionCounter++;
+      176:  975:}
+        -:  976:
+      176:  977:void RobotController::updateRuntimeStatistics()
+        -:  978:{
+      176:  979:    m_memory.runtimeStatistics
+      176:  980:        .lastStatisticsUpdateTimestampMs =
+      176:  981:        getCurrentTimestampMs();
+      176:  982:}
+        -:  983:
+      176:  984:void RobotController::updateSystemHealth()
+        -:  985:{
+      176:  986:    m_memory.systemHealth
+      176:  987:        .sensorHealthy =
+      176:  988:        m_ultrasonicSensor.isHealthy() &&
+      176:  989:        !m_memory.runtimeFlags.sensorTimeoutActive &&
+      163:  990:        !m_latestFilteredData.timeoutOccurred;
+        -:  991:
+      176:  992:    m_memory.systemHealth
+      176:  993:        .motorHealthy =
+      176:  994:        !m_motorController.hasFault();
+        -:  995:
+      176:  996:    m_memory.systemHealth
+      176:  997:        .driverHealthy =
+      176:  998:        m_memory.systemHealth
+      176:  999:            .motorHealthy;
+        -: 1000:
+      176: 1001:    m_memory.systemHealth
+      176: 1002:        .emergencyActive =
+      176: 1003:        m_memory.emergencyState
+      176: 1004:            .emergencyActive;
+        -: 1005:
+      176: 1006:    m_memory.systemHealth
+      176: 1007:        .timingHealthy =
+      176: 1008:        validateTimingHealth();
+        -: 1009:
+      176: 1010:    m_memory.systemHealth
+      176: 1011:        .systemHealthy =
+      176: 1012:        validateRuntimeHealth();
+      176: 1013:}
+        -: 1014:
+      579: 1015:uint32_t RobotController::getCurrentTimestampMs() const
+        -: 1016:{
+      579: 1017:    return Timer::milliseconds(
+      579: 1018:        m_timer);
+        -: 1019:}
+        -: 1020:
+     2390: 1021:uint32_t RobotController::getCurrentTimestampUs() const
+        -: 1022:{
+     2390: 1023:    return static_cast<uint32_t>(
+     2390: 1024:        m_timer.getTimestampUs());
+        -: 1025:}

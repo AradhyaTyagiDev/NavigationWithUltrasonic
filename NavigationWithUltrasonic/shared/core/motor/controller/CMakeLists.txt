@@ -1,15 +1,15 @@
-#Create library "motor_controller" using MotorController.cpp
-add_library(motor_controller
+#Create library "motor" using MotorController.cpp
+add_library(motor
     src/MotorController.cpp
 )
 
 #Also allow compiler to search headers inside include folder.
-target_include_directories(motor_controller
+target_include_directories(motor
     PUBLIC
         include
 )
 
-target_link_libraries(motor_controller
+target_link_libraries(motor
     PUBLIC
         motion        
 )

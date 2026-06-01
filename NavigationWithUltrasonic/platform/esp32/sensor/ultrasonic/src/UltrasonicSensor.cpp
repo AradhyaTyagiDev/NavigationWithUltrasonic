@@ -19,33 +19,16 @@ UltrasonicSensor::UltrasonicSensor(const Config &config)
 
 UltrasonicSensor::~UltrasonicSensor()
 {
-    if (m_taskHandle)
-    {
-        vTaskDelete(m_taskHandle);
-    }
-
-    if (m_rxChannel)
-    {
-        rmt_disable(m_rxChannel);
-
-        rmt_del_channel(m_rxChannel);
-    }
-
-    if (m_sensorQueue)
-    {
-        vQueueDelete(m_sensorQueue);
-    }
-
-    if (m_dataMutex)
-    {
-        vSemaphoreDelete(m_dataMutex);
-    }
-
     shutdown();
 }
 
 bool UltrasonicSensor::initialize()
 {
+    if (m_initialized)
+    {
+        return true;
+    }
+
     m_sensorQueue = xQueueCreate(m_config.queueSize, sizeof(UltrasonicSensorData));
 
     if (!m_sensorQueue)
@@ -76,11 +59,23 @@ bool UltrasonicSensor::initialize()
 
     ESP_LOGI(TAG, "Ultrasonic initialized");
 
+    m_initialized = true;
+
     return true;
 }
 
 bool UltrasonicSensor::start()
 {
+    if (!m_initialized || !m_config.enabled)
+    {
+        return false;
+    }
+
+    if (m_running)
+    {
+        return true;
+    }
+
     BaseType_t result = xTaskCreatePinnedToCore(
         sensorTaskEntry,
         "UltrasonicTask",
@@ -90,12 +85,17 @@ bool UltrasonicSensor::start()
         &m_taskHandle,
         m_config.taskCore);
 
-    return result == pdPASS;
+    m_running =
+        result == pdPASS;
+
+    return m_running;
 }
 
 // Shutdown
 void UltrasonicSensor::shutdown()
 {
+    m_running = false;
+
     // Stop sensor task
     if (m_taskHandle != nullptr)
     {
@@ -142,6 +142,8 @@ void UltrasonicSensor::shutdown()
     //-----------------------------------------
     // Runtime flags
     m_echoReceived = false;
+
+    m_initialized = false;
 
     ESP_LOGI(
         TAG,
@@ -260,6 +262,8 @@ bool UltrasonicSensor::rmtRxCallback(
     const rmt_rx_done_event_data_t *edata,
     void *user_ctx)
 {
+    (void)channel;
+
     UltrasonicSensor *sensor =
         static_cast<UltrasonicSensor *>(user_ctx);
 
@@ -328,19 +332,31 @@ void UltrasonicSensor::sensorTaskEntry(
 
 void UltrasonicSensor::sensorTaskLoop()
 {
-    const TickType_t delayTicks =
-        pdMS_TO_TICKS(
-            1000 / m_config.sensorFrequencyHz);
+    TickType_t previousWakeTime =
+        xTaskGetTickCount();
 
-    while (true)
+    const TickType_t period =
+        pdMS_TO_TICKS(
+            1000 /
+            (m_config.sensorFrequencyHz == 0
+                 ? 1
+                 : m_config.sensorFrequencyHz));
+
+    while (m_running)
     {
         // Start RMT receiver and Now hardware waits for echo pulse.
         startEchoReceive();
         // Send trigger pulse after RMT receiver is ready.
         sendTriggerPulse();
 
-        vTaskDelay(delayTicks);
+        vTaskDelayUntil(
+            &previousWakeTime,
+            period);
     }
+
+    m_taskHandle = nullptr;
+
+    vTaskDelete(nullptr);
 }
 
 QueueHandle_t UltrasonicSensor::getQueueHandle() const
@@ -365,4 +381,17 @@ bool UltrasonicSensor::fetchLatestData(UltrasonicSensorData &outData)
             m_sensorQueue,
             &outData,
             0) == pdTRUE);
+}
+
+bool UltrasonicSensor::isHealthy() const
+{
+    return (
+        m_initialized &&
+        m_sensorQueue != nullptr &&
+        m_rxChannel != nullptr);
+}
+
+bool UltrasonicSensor::isRunning() const
+{
+    return m_running;
 }

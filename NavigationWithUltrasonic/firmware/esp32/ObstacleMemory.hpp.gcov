@@ -1,0 +1,40 @@
+        -:    0:Source:lib/shared/core/obstacle/include/ObstacleMemory.hpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-ObstacleManager.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-ObstacleManager.gcda
+        -:    0:Runs:1
+        -:    1:#pragma once
+        -:    2:
+        -:    3:#include <stdint.h>
+        -:    4:#include "DangerLevel.hpp"
+        -:    5:
+       44:    6:struct ObstacleMemory
+        -:    7:{
+        -:    8:    // Obstacle persistence
+       44:    9:    bool obstacleActive = false;
+       44:   10:    bool obstacleRemembered = false;
+        -:   11:
+        -:   12:    // Last known obstacle state
+       44:   13:    DangerLevel lastDangerLevel = DangerLevel::Safe;
+        -:   14:
+        -:   15:    // Last known obstacle properties
+        -:   16:    /// Even if obstacle disappears briefly: retain environmental memory
+       44:   17:    float lastKnownDistanceCm = 0.0f;
+        -:   18:    // predictive avoidance, collision urgency, danger escalation
+       44:   19:    float lastKnownVelocityCmPerSec = 0.0f;
+       44:   20:    float lastKnownConfidence = 0.0f;
+        -:   21:
+        -:   22:    // Temporal persistence
+       44:   23:    uint32_t firstDetectedTimestampMs = 0;
+       44:   24:    uint32_t lastSeenTimestampMs = 0;
+        -:   25:
+        -:   26:    // Environment persistence metrics
+       44:   27:    uint32_t consecutiveDetectionFrames = 0;
+        -:   28:    // temporal obstacle memory, hysteresis, smooth disappearance
+       44:   29:    uint32_t consecutiveLostFrames = 0;
+        -:   30:
+        -:   31:    // Stability information
+       44:   32:    bool obstacleStable = false;
+        -:   33:
+        -:   34:    // Sensor reliability snapshot
+       44:   35:    bool sensorHealthy = true;
+        -:   36:};

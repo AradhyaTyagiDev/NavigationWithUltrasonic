@@ -1,0 +1,14 @@
+        -:    0:Source:lib/shared/interfaces/include/sensor/UltrasonicTypes.hpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcda
+        -:    0:Runs:1
+        -:    1:#pragma once
+        -:    2:
+        -:    3:#include <stdint.h>
+        -:    4:
+    #####:    5:struct UltrasonicSensorData
+        -:    6:{
+    #####:    7:    uint32_t pulseWidthUs = 0;
+        -:    8:
+    #####:    9:    uint32_t timestampMs = 0;
+        -:   10:};

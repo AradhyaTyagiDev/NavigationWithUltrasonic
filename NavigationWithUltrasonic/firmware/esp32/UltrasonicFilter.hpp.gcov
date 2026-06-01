@@ -1,0 +1,65 @@
+        -:    0:Source:lib/shared/core/filter/include/UltrasonicFilter.hpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-UltrasonicFilter.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-UltrasonicFilter.gcda
+        -:    0:Runs:1
+        -:    1:#pragma once
+        -:    2:
+        -:    3:#include "FilteredSensorData.hpp"
+        -:    4:#include "UltrasonicFilterConfig.hpp"
+        -:    5:
+        -:    6:class UltrasonicFilter
+        -:    7:{
+        -:    8:public:
+        -:    9:    explicit UltrasonicFilter(
+        -:   10:        const UltrasonicFilterConfig &config);
+        -:   11:
+        -:   12:    FilteredSensorData process(
+        -:   13:        uint32_t pulseWidthUs,
+        -:   14:        uint32_t timestampMs);
+        -:   15:
+        -:   16:private:
+        -:   17:    float pulseToDistance(
+        -:   18:        uint32_t pulseWidthUs);
+        -:   19:
+        -:   20:    bool isValidDistance(
+        -:   21:        float distanceCm);
+        -:   22:
+        -:   23:    float calculateConfidence(
+        -:   24:        float newDistance);
+        -:   25:
+        -:   26:    bool isOutlier(
+        -:   27:        float newDistance);
+        -:   28:
+        -:   29:    float applyDeadZone(
+        -:   30:        float newDistance);
+        -:   31:
+        -:   32:    float applyAdaptiveEMA(
+        -:   33:        float newDistance);
+        -:   34:
+        -:   35:    float calculateVelocity(
+        -:   36:        float currentDistance,
+        -:   37:        uint32_t currentTimestamp);
+        -:   38:
+        -:   39:    bool updateStability(
+        -:   40:        float filteredDistance);
+        -:   41:
+        -:   42:    float applyConfidenceDecay(
+        -:   43:        float newConfidence);
+        -:   44:
+        -:   45:private:
+        -:   46:    UltrasonicFilterConfig m_config;
+        -:   47:
+       45:   48:    float m_lastDistance = 400.0f;
+        -:   49:
+       45:   50:    float m_filteredDistance = 400.0f;
+        -:   51:
+       45:   52:    float m_lastVelocity = 0.0f;
+        -:   53:
+       45:   54:    uint32_t m_lastTimestamp = 0;
+        -:   55:
+       45:   56:    uint32_t m_stableCounter = 0;
+        -:   57:
+       45:   58:    float m_persistentConfidence = 1.0f;
+        -:   59:
+       45:   60:    uint32_t m_consecutiveTimeouts = 0;
+        -:   61:};

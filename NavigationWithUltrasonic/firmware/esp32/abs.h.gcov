@@ -1,0 +1,74 @@
+        -:    0:Source:/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/c++/v1/__math/abs.h
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-MotorController.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-MotorController.gcda
+        -:    0:Runs:1
+        -:    1://===----------------------------------------------------------------------===//
+        -:    2://
+        -:    3:// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+        -:    4:// See https://llvm.org/LICENSE.txt for license information.
+        -:    5:// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+        -:    6://
+        -:    7://===----------------------------------------------------------------------===//
+        -:    8:
+        -:    9:#ifndef _LIBCPP___MATH_ABS_H
+        -:   10:#define _LIBCPP___MATH_ABS_H
+        -:   11:
+        -:   12:#include <__config>
+        -:   13:#include <__type_traits/enable_if.h>
+        -:   14:#include <__type_traits/is_integral.h>
+        -:   15:
+        -:   16:#if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)
+        -:   17:#  pragma GCC system_header
+        -:   18:#endif
+        -:   19:
+        -:   20:_LIBCPP_BEGIN_NAMESPACE_STD
+        -:   21:
+        -:   22:namespace __math {
+        -:   23:
+        -:   24:// fabs
+        -:   25:
+    #####:   26:[[__nodiscard__]] inline _LIBCPP_HIDE_FROM_ABI float fabs(float __x) _NOEXCEPT { return __builtin_fabsf(__x); }
+        -:   27:
+        -:   28:template <class = int>
+        -:   29:[[__nodiscard__]] _LIBCPP_HIDE_FROM_ABI double fabs(double __x) _NOEXCEPT {
+        -:   30:  return __builtin_fabs(__x);
+        -:   31:}
+        -:   32:
+        -:   33:[[__nodiscard__]] inline _LIBCPP_HIDE_FROM_ABI long double fabs(long double __x) _NOEXCEPT {
+        -:   34:  return __builtin_fabsl(__x);
+        -:   35:}
+        -:   36:
+        -:   37:template <class _A1, __enable_if_t<is_integral<_A1>::value, int> = 0>
+        -:   38:[[__nodiscard__]] inline _LIBCPP_HIDE_FROM_ABI double fabs(_A1 __x) _NOEXCEPT {
+        -:   39:  return __builtin_fabs((double)__x);
+        -:   40:}
+        -:   41:
+        -:   42:// abs
+        -:   43:
+        -:   44:[[__nodiscard__]] _LIBCPP_HIDE_FROM_ABI inline float abs(float __x) _NOEXCEPT { return __builtin_fabsf(__x); }
+        -:   45:[[__nodiscard__]] _LIBCPP_HIDE_FROM_ABI inline double abs(double __x) _NOEXCEPT { return __builtin_fabs(__x); }
+        -:   46:
+        -:   47:[[__nodiscard__]] _LIBCPP_HIDE_FROM_ABI inline long double abs(long double __x) _NOEXCEPT {
+        -:   48:  return __builtin_fabsl(__x);
+        -:   49:}
+        -:   50:
+        -:   51:template <class = int>
+        -:   52:[[__nodiscard__]] _LIBCPP_HIDE_FROM_ABI inline int abs(int __x) _NOEXCEPT {
+        -:   53:  return __builtin_abs(__x);
+        -:   54:}
+        -:   55:
+        -:   56:template <class = int>
+        -:   57:[[__nodiscard__]] _LIBCPP_HIDE_FROM_ABI inline long abs(long __x) _NOEXCEPT {
+        -:   58:  return __builtin_labs(__x);
+        -:   59:}
+        -:   60:
+        -:   61:template <class = int>
+        -:   62:[[__nodiscard__]] _LIBCPP_HIDE_FROM_ABI inline long long abs(long long __x) _NOEXCEPT {
+        -:   63:  return __builtin_llabs(__x);
+        -:   64:}
+        -:   65:
+        -:   66:} // namespace __math
+        -:   67:
+        -:   68:_LIBCPP_END_NAMESPACE_STD
+        -:   69:
+        -:   70:#endif // _LIBCPP___MATH_ABS_H

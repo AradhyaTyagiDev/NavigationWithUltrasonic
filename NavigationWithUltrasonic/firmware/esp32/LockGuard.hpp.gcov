@@ -1,0 +1,38 @@
+        -:    0:Source:lib/shared/interfaces/include/synchronization/LockGuard.hpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcda
+        -:    0:Runs:1
+        -:    1:#pragma once
+        -:    2:
+        -:    3:#include "interfaces/include/synchronization/IMutex.hpp"
+        -:    4:
+        -:    5:/**
+        -:    6: * @brief RAII mutex lock helper.
+        -:    7: *
+        -:    8: * Locks the mutex on construction and automatically
+        -:    9: * unlocks it when leaving scope.
+        -:   10: *
+        -:   11: * Usage:
+        -:   12: *   LockGuard guard(mutex());
+        -:   13: */
+        -:   14:// Prevents forgotten unlocks.
+        -:   15:class LockGuard
+        -:   16:{
+        -:   17:public:
+    #####:   18:    explicit LockGuard(IMutex &mutex)
+    #####:   19:        : m_mutex(mutex)
+    #####:   20:    {
+    #####:   21:        m_mutex.lock();
+    #####:   22:    }
+        -:   23:
+    #####:   24:    ~LockGuard()
+    #####:   25:    {
+    #####:   26:        m_mutex.unlock();
+    #####:   27:    }
+        -:   28:
+        -:   29:    LockGuard(const LockGuard &) = delete;
+        -:   30:    LockGuard &operator=(const LockGuard &) = delete;
+        -:   31:
+        -:   32:private:
+        -:   33:    IMutex &m_mutex;
+        -:   34:};

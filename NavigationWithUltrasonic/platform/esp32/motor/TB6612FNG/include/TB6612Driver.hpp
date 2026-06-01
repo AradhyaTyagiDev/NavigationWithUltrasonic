@@ -10,6 +10,8 @@
 
 #include "interfaces/include/motor/driver/IMotorDriver.hpp"
 #include "interfaces/include/synchronization/SynchronizedObject.hpp"
+#include "interfaces/include/logging/ILogger.hpp"
+#include "interfaces/include/timing/ITimer.hpp"
 
 #include "driver/gpio.h"
 #include "driver/ledc.h"
@@ -46,7 +48,7 @@
 class TB6612Driver final : public IMotorDriver
 {
 public:
-    explicit TB6612Driver(IMutex &mutex, const TB6612DriverConfig &config);
+    explicit TB6612Driver(IMutex &mutex, ILogger &logger, ITimer &timer, const TB6612DriverConfig &config);
 
     // Destructor
     ~TB6612Driver() override = default;
@@ -80,7 +82,7 @@ public:
     //      differential drive robots
     // Reduces:
     //      wheel update jitter
-    void executeDualCommand(const MotorDriverCommand &leftCommand, const MotorDriverCommand &rightCommand);
+    void executeDualCommand(const MotorDriverCommand &leftCommand, const MotorDriverCommand &rightCommand) override;
 
     // Stop motors
     void stopAllMotors() override;
@@ -198,9 +200,15 @@ private:
     // Motor inversion utility
     bool isMotorInverted(MotorChannel channel) const;
 
-    void TB6612Driver::executeCommandInternal(const MotorDriverCommand &command);
+    void executeCommandInternal(const MotorDriverCommand &command);
 
 private:
+    IMutex &m_mutex;
+
+    ILogger &m_logger;
+
+    ITimer &m_timer;
+
     // Configuration
     TB6612DriverConfig m_config;
 
@@ -209,6 +217,4 @@ private:
 
     // Hardware capabilities
     MotorDriverCapabilities m_capabilities;
-
-    IMutex &m_mutex;
 };

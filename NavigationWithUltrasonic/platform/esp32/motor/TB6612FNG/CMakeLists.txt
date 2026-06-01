@@ -11,6 +11,10 @@ target_include_directories(motor
 
 target_link_libraries(motor
     PUBLIC
+        interfaces
+        motor
+    PRIVATE
         freertos
-        esp_timer
+        driver
 )
+

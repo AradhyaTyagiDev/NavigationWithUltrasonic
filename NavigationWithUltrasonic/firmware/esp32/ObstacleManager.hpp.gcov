@@ -1,0 +1,68 @@
+        -:    0:Source:lib/shared/core/obstacle/include/ObstacleManager.hpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-ObstacleManager.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-ObstacleManager.gcda
+        -:    0:Runs:1
+        -:    1://====================================================
+        -:    2:// File: ObstacleManager.hpp
+        -:    3://====================================================
+        -:    4:
+        -:    5:#pragma once
+        -:    6:
+        -:    7:#include <stdint.h>
+        -:    8:
+        -:    9:#include "ObstacleManagerConfig.hpp"
+        -:   10:#include "ObstacleAnalysis.hpp"
+        -:   11:#include "ObstacleMemory.hpp"
+        -:   12:#include "DangerLevel.hpp"
+        -:   13:
+        -:   14:#include "filter/include/FilteredSensorData.hpp"
+        -:   15:
+        -:   16:class ObstacleManager
+        -:   17:{
+        -:   18:public:
+        -:   19:    explicit ObstacleManager(
+        -:   20:        const ObstacleManagerConfig &config);
+        -:   21:
+        -:   22:    // Main environment interpretation pipeline
+        -:   23:    ObstacleAnalysis process(
+        -:   24:        const FilteredSensorData &sensorData,
+        -:   25:        uint32_t currentTimestampMs);
+        -:   26:
+        -:   27:private:
+        -:   28:    // Environment interpretation
+        -:   29:    DangerLevel determineDangerLevel(
+        -:   30:        const FilteredSensorData &sensorData) const;
+        -:   31:
+        -:   32:    // Danger hysteresis
+        -:   33:    DangerLevel applyHysteresis(
+        -:   34:        DangerLevel newLevel,
+        -:   35:        float distanceCm) const;
+        -:   36:
+        -:   37:    // Obstacle validation
+        -:   38:    bool isObstacleValid(
+        -:   39:        const FilteredSensorData &sensorData) const;
+        -:   40:
+        -:   41:    // Sensor health interpretation
+        -:   42:    bool isSensorHealthy(
+        -:   43:        const FilteredSensorData &sensorData) const;
+        -:   44:
+        -:   45:    // Environmental memory management
+        -:   46:    void updateObstacleMemory(
+        -:   47:        const ObstacleAnalysis &analysis,
+        -:   48:        uint32_t currentTimestampMs);
+        -:   49:
+        -:   50:    // Obstacle persistence validation
+        -:   51:    bool shouldRememberObstacle(
+        -:   52:        uint32_t currentTimestampMs) const;
+        -:   53:
+        -:   54:private:
+        -:   55:    // Configuration
+        -:   56:    ObstacleManagerConfig m_config;
+        -:   57:
+        -:   58:    // Temporal environment memory
+        -:   59:    ObstacleMemory m_memory;
+        -:   60:
+        -:   61:    // Current environment state
+       44:   62:    DangerLevel m_currentDangerLevel =
+        -:   63:        DangerLevel::Unknown;
+        -:   64:};

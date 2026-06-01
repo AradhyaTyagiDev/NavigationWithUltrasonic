@@ -1,0 +1,69 @@
+        -:    0:Source:lib/shared/interfaces/include/timing/ITimer.hpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcda
+        -:    0:Runs:1
+        -:    1:#pragma once
+        -:    2:
+        -:    3:#include <cstdint>
+        -:    4:
+        -:    5:class ITimer
+        -:    6:{
+        -:    7:public:
+        -:    8:    virtual ~ITimer() = default;
+        -:    9:
+        -:   10:    virtual uint64_t getTimestampUs() const = 0;
+        -:   11:};
+        -:   12:
+        -:   13:namespace Timer
+        -:   14:{
+    #####:   15:    inline uint32_t milliseconds(
+        -:   16:        const ITimer &timer)
+        -:   17:    {
+    #####:   18:        return static_cast<uint32_t>(
+    #####:   19:            timer.getTimestampUs() / 1000ULL);
+        -:   20:    }
+        -:   21:
+        -:   22:    inline uint32_t seconds(
+        -:   23:        const ITimer &timer)
+        -:   24:    {
+        -:   25:        return static_cast<uint32_t>(
+        -:   26:            timer.getTimestampUs() / 1000000ULL);
+        -:   27:    }
+        -:   28:}
+        -:   29:
+        -:   30:class MockTimer final : public ITimer
+        -:   31:{
+        -:   32:public:
+        -:   33:    uint64_t getTimestampUs() const override
+        -:   34:    {
+        -:   35:        return m_timestampUs;
+        -:   36:    }
+        -:   37:
+        -:   38:    void setTimestampUs(
+        -:   39:        uint64_t timestampUs)
+        -:   40:    {
+        -:   41:        m_timestampUs = timestampUs;
+        -:   42:    }
+        -:   43:
+        -:   44:    void advanceUs(
+        -:   45:        uint64_t deltaUs)
+        -:   46:    {
+        -:   47:        m_timestampUs += deltaUs;
+        -:   48:    }
+        -:   49:
+        -:   50:    void advanceMs(
+        -:   51:        uint32_t deltaMs)
+        -:   52:    {
+        -:   53:        advanceUs(
+        -:   54:            static_cast<uint64_t>(deltaMs) *
+        -:   55:            1000ULL);
+        -:   56:    }
+        -:   57:
+        -:   58:    void reset()
+        -:   59:    {
+        -:   60:        m_timestampUs = 0;
+        -:   61:    }
+        -:   62:
+        -:   63:private:
+        -:   64:    uint64_t m_timestampUs = 0;
+        -:   65:};

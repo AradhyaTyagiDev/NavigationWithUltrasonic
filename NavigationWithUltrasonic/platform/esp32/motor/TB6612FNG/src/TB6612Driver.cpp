@@ -4,11 +4,15 @@
 
 #include "motor/TB6612FNG/include/TB6612Driver.hpp"
 
-#include "esp_log.h"
-#include "esp_timer.h"
+#include "interfaces/include/synchronization/LockGuard.hpp"
+#include "interfaces/include/logging/LoggerExtensions.hpp"
+#include "interfaces/include/timing/ITimer.hpp"
 
 #include <algorithm>
 #include <cmath>
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 //====================================================
 // Constants
@@ -16,8 +20,7 @@
 
 namespace
 {
-    constexpr const char *TAG =
-        "TB6612Driver";
+    constexpr const char *TAG = "TB6612Driver";
 }
 
 //====================================================
@@ -25,21 +28,17 @@ namespace
 //====================================================
 
 TB6612Driver::TB6612Driver(
+    IMutex &mutex,
+    ILogger &logger,
+    ITimer &timer,
     const TB6612DriverConfig &config)
-    : m_config(config)
+    : m_mutex(mutex), m_logger(logger), m_timer(timer), m_config(config)
 {
-    //-----------------------------------------
     // Driver capabilities
-    //-----------------------------------------
-
     m_capabilities.supportsPWM = true;
-
     m_capabilities.supportsReverse = true;
-
     m_capabilities.supportsDualChannel = true;
-
     m_capabilities.supportsActiveBraking = true;
-
     m_capabilities.supportsEmergencyStop = true;
 }
 
@@ -55,7 +54,8 @@ bool TB6612Driver::initialize()
 
     if (!initializeGPIO())
     {
-        ESP_LOGE(
+        Logger::error(
+            m_logger,
             TAG,
             "Failed to initialize GPIO");
 
@@ -68,7 +68,8 @@ bool TB6612Driver::initialize()
 
     if (!initializePWM())
     {
-        ESP_LOGE(
+        Logger::error(
+            m_logger,
             TAG,
             "Failed to initialize PWM");
 
@@ -91,7 +92,8 @@ bool TB6612Driver::initialize()
 
     transitionToState(MotorDriverState::Ready);
 
-    ESP_LOGI(
+    Logger::info(
+        m_logger,
         TAG,
         "TB6612 driver initialized");
 
@@ -112,7 +114,8 @@ void TB6612Driver::shutdown()
 
     m_memory.initialized = false;
 
-    ESP_LOGI(
+    Logger::info(
+        m_logger,
         TAG,
         "TB6612 driver shutdown");
 }
@@ -149,7 +152,8 @@ bool TB6612Driver::initializeGPIO()
 
     if (result != ESP_OK)
     {
-        ESP_LOGE(
+        Logger::error(
+            m_logger,
             TAG,
             "GPIO configuration failed");
 
@@ -205,7 +209,7 @@ bool TB6612Driver::initializePWM()
                 m_config.pwmTimer,
 
             .freq_hz =
-                static_cast<int>(
+                static_cast<uint32_t>(
                     m_config.pwmFrequencyHz),
 
             .clk_cfg =
@@ -220,7 +224,8 @@ bool TB6612Driver::initializePWM()
         ledc_timer_config(
             &timerConfig) != ESP_OK)
     {
-        ESP_LOGE(
+        Logger::error(
+            m_logger,
             TAG,
             "PWM timer config failed");
 
@@ -231,63 +236,39 @@ bool TB6612Driver::initializePWM()
     // Left PWM channel
     //-----------------------------------------
 
-    ledc_channel_config_t leftChannel =
-        {
-            .gpio_num =
-                m_config.leftMotorPWMPin,
+    ledc_channel_config_t leftChannel{};
 
-            .speed_mode =
-                m_config.ledcMode,
-
-            .channel =
-                m_config.leftPWMChannel,
-
-            .intr_type =
-                LEDC_INTR_DISABLE,
-
-            .timer_sel =
-                m_config.pwmTimer,
-
-            .duty = 0,
-
-            .hpoint = 0,
+    leftChannel.gpio_num = m_config.leftMotorPWMPin;
+    leftChannel.speed_mode = m_config.ledcMode;
+    leftChannel.channel = m_config.leftPWMChannel;
+    leftChannel.intr_type = LEDC_INTR_DISABLE;
+    leftChannel.timer_sel = m_config.pwmTimer;
+    leftChannel.duty = 0;
+    leftChannel.hpoint = 0;
 
 #if ESP_IDF_VERSION_MAJOR >= 5
-            .sleep_mode =
-                LEDC_SLEEP_MODE_NO_ALIVE_NO_PD
+    leftChannel.sleep_mode = LEDC_SLEEP_MODE_NO_ALIVE_NO_PD;
+    leftChannel.flags.output_invert = 0;
 #endif
-        };
 
     //-----------------------------------------
     // Right PWM channel
     //-----------------------------------------
 
-    ledc_channel_config_t rightChannel =
-        {
-            .gpio_num =
-                m_config.rightMotorPWMPin,
+    ledc_channel_config_t rightChannel{};
 
-            .speed_mode =
-                m_config.ledcMode,
-
-            .channel =
-                m_config.rightPWMChannel,
-
-            .intr_type =
-                LEDC_INTR_DISABLE,
-
-            .timer_sel =
-                m_config.pwmTimer,
-
-            .duty = 0,
-
-            .hpoint = 0,
+    rightChannel.gpio_num = m_config.rightMotorPWMPin;
+    rightChannel.speed_mode = m_config.ledcMode;
+    rightChannel.channel = m_config.rightPWMChannel;
+    rightChannel.intr_type = LEDC_INTR_DISABLE;
+    rightChannel.timer_sel = m_config.pwmTimer;
+    rightChannel.duty = 0;
+    rightChannel.hpoint = 0;
 
 #if ESP_IDF_VERSION_MAJOR >= 5
-            .sleep_mode =
-                LEDC_SLEEP_MODE_NO_ALIVE_NO_PD
+    rightChannel.sleep_mode = LEDC_SLEEP_MODE_NO_ALIVE_NO_PD;
+    rightChannel.flags.output_invert = 0;
 #endif
-        };
 
     if (
         ledc_channel_config(
@@ -323,9 +304,37 @@ void TB6612Driver::executeCommandInternal(const MotorDriverCommand &command)
         return;
     }
 
+    // Command emergency stop request
+    if (command.emergencyStop)
+    {
+        applyEmergencyBrake();
+
+        setStandbyMode(false);
+
+        m_memory.emergencyStopActive = true;
+
+        transitionToState(
+            MotorDriverState::EmergencyStopped);
+
+        m_memory.lastEmergencyBrakeTimestampMs = Timer::milliseconds(m_timer);
+
+        Logger::warning(
+            m_logger,
+            TAG,
+            "Emergency stop activated");
+
+        return;
+    }
+
+    // Disabled motor output
+    if (!command.enabled)
+    {
+        stopMotor(command.channel);
+        return;
+    }
+
     // Timestamp
-    const uint32_t timestampMs =
-        getCurrentTimestampMs();
+    const uint32_t timestampMs = Timer::milliseconds(m_timer);
 
     // Update watchdog timestamp
     m_memory.lastCommandTimestampMs =
@@ -347,8 +356,7 @@ void TB6612Driver::executeCommandInternal(const MotorDriverCommand &command)
     }
 
     // Safe reverse sequence
-    if (
-        m_config.enableSafeReverseSequence)
+    if (m_config.enableSafeReverseSequence)
     {
         performSafeReverseSequence(
             command.channel,
@@ -361,10 +369,32 @@ void TB6612Driver::executeCommandInternal(const MotorDriverCommand &command)
             command.direction);
     }
 
-    // PWM validation
+    // Convert normalized speed to PWM duty
+    const float clampedSpeed =
+        std::clamp(
+            command.normalizedSpeed,
+            0.0f,
+            1.0f);
+
     uint32_t pwmDuty =
+        static_cast<uint32_t>(
+            clampedSpeed *
+            static_cast<float>(m_config.maximumPWMDuty));
+
+    // PWM validation
+    pwmDuty =
         validatePWMDuty(
-            command.pwmDuty);
+            pwmDuty);
+
+    // Brake handling
+    if (command.brakeMode != BrakeMode::Coast)
+    {
+        applyMotorBrake(
+            command.channel,
+            command.brakeMode);
+
+        pwmDuty = 0;
+    }
 
     // Deadzone compensation
     pwmDuty =
@@ -406,7 +436,7 @@ void TB6612Driver::executeCommandInternal(const MotorDriverCommand &command)
 
 void TB6612Driver::executeCommand(const MotorDriverCommand &command)
 {
-    ScopedDriverLock lock(this);
+    LockGuard guard(m_mutex);
     executeCommandInternal(command);
 }
 
@@ -415,7 +445,7 @@ void TB6612Driver::executeDualCommand(
     const MotorDriverCommand &leftCommand,
     const MotorDriverCommand &rightCommand)
 {
-    ScopedDriverLock lock(this);
+    LockGuard guard(m_mutex);
 
     // Execute left
     executeCommandInternal(leftCommand);
@@ -437,7 +467,7 @@ void TB6612Driver::executeDualCommand(
 
 void TB6612Driver::stopAllMotors()
 {
-    ScopedDriverLock lock(this);
+    LockGuard guard(m_mutex);
 
     stopMotor(MotorChannel::Left);
 
@@ -452,7 +482,7 @@ void TB6612Driver::stopAllMotors()
 
 void TB6612Driver::emergencyStop()
 {
-    ScopedDriverLock lock(this);
+    LockGuard guard(m_mutex);
 
     applyEmergencyBrake();
 
@@ -462,10 +492,10 @@ void TB6612Driver::emergencyStop()
 
     transitionToState(MotorDriverState::EmergencyStopped);
 
-    m_memory.lastEmergencyBrakeTimestampMs =
-        getCurrentTimestampMs();
+    m_memory.lastEmergencyBrakeTimestampMs = Timer::milliseconds(m_timer);
 
-    ESP_LOGW(
+    Logger::warning(
+        m_logger,
         TAG,
         "Emergency stop activated");
 }
@@ -476,7 +506,7 @@ void TB6612Driver::emergencyStop()
 
 void TB6612Driver::clearEmergencyStop()
 {
-    ScopedDriverLock lock(this);
+    LockGuard guard(m_mutex);
 
     // Stop motors safely
     stopMotor(MotorChannel::Left);
@@ -491,7 +521,10 @@ void TB6612Driver::clearEmergencyStop()
     // Transition state
     transitionToState(MotorDriverState::Ready);
 
-    ESP_LOGI(TAG, "Emergency stop cleared");
+    Logger::info(
+        m_logger,
+        TAG,
+        "Emergency stop cleared");
 }
 
 //====================================================
@@ -500,7 +533,7 @@ void TB6612Driver::clearEmergencyStop()
 
 void TB6612Driver::applyBrakeMode(BrakeMode brakeMode)
 {
-    ScopedDriverLock lock(this);
+    LockGuard guard(m_mutex);
 
     applyMotorBrake(
         MotorChannel::Left,
@@ -522,7 +555,7 @@ void TB6612Driver::setMotorDirection(
     MotorChannel channel,
     MotorDirection direction)
 {
-    ScopedDriverLock lock(this);
+    LockGuard guard(m_mutex);
 
     applyMotorDirection(
         channel,
@@ -537,7 +570,7 @@ void TB6612Driver::setPWMDuty(
     MotorChannel channel,
     uint32_t pwmDuty)
 {
-    ScopedDriverLock lock(this);
+    LockGuard guard(m_mutex);
 
     applyPWMDuty(
         channel,
@@ -551,7 +584,7 @@ void TB6612Driver::setPWMDuty(
 void TB6612Driver::enableMotor(
     MotorChannel channel)
 {
-    ScopedDriverLock lock(this);
+    LockGuard guard(m_mutex);
 
     setStandbyMode(true);
 
@@ -574,7 +607,7 @@ void TB6612Driver::enableMotor(
 void TB6612Driver::disableMotor(
     MotorChannel channel)
 {
-    ScopedDriverLock lock(this);
+    LockGuard guard(m_mutex);
 
     stopMotor(channel);
 
@@ -598,7 +631,8 @@ bool TB6612Driver::isReady() const
 {
     return (
         m_memory.initialized &&
-        !m_memory.faultDetected);
+        !m_memory.faultDetected &&
+        !m_memory.emergencyStopActive);
 }
 
 //====================================================
@@ -1102,17 +1136,6 @@ void TB6612Driver::updateMotorMemory(
 }
 
 //====================================================
-// Timestamp Utility
-//====================================================
-
-uint32_t
-TB6612Driver::getCurrentTimestampMs() const
-{
-    return static_cast<uint32_t>(
-        esp_timer_get_time() / 1000ULL);
-}
-
-//====================================================
 // Pin Mapping
 //====================================================
 
@@ -1190,16 +1213,26 @@ bool TB6612Driver::hasCommandTimedOut(uint32_t currentTimestampMs) const
 
 void TB6612Driver::handleCommandTimeout()
 {
-    ESP_LOGE(
+    Logger::error(
+        m_logger,
         TAG,
         "Motor command timeout");
 
-    emergencyStop();
+    applyEmergencyBrake();
+
+    setStandbyMode(false);
+
+    m_memory.emergencyStopActive = true;
+
+    transitionToState(
+        MotorDriverState::EmergencyStopped);
+
+    m_memory.lastEmergencyBrakeTimestampMs = Timer::milliseconds(m_timer);
 }
 
 void TB6612Driver::update(uint32_t currentTimestampMs)
 {
-    ScopedDriverLock lock(this);
+    LockGuard guard(m_mutex);
 
     //-----------------------------------------
     // Watchdog timeout
@@ -1215,7 +1248,7 @@ void TB6612Driver::update(uint32_t currentTimestampMs)
 
 void TB6612Driver::reset()
 {
-    ScopedDriverLock lock(this);
+    LockGuard guard(m_mutex);
 
     stopMotor(MotorChannel::Left);
 
@@ -1259,7 +1292,8 @@ void TB6612Driver::transitionToState(
             m_memory.currentState,
             newState))
     {
-        ESP_LOGE(
+        Logger::error(
+            m_logger,
             TAG,
             "Invalid state transition");
 

@@ -4,21 +4,18 @@
 
 #pragma once
 
+#include "interfaces/include/motor/driver/MotorDriverCommand.hpp"
 #include "interfaces/include/motor/driver/IMotorDriver.hpp"
+#include "interfaces/include/synchronization/IMutex.hpp"
+#include "interfaces/include/logging/ILogger.hpp"
+#include "interfaces/include/timing/ITimer.hpp"
+
 #include "motion/include/MotionCommand.hpp"
 #include "motor/controller/include/MotorControllerConfig.hpp"
 #include "motor/controller/include/MotorControllerMemory.hpp"
-#include ""
-#include ""
-#include ""
-#include ""
-#include ""
-
-#include "MotorDriverCommand.hpp"
-#include "MotorState.hpp"
-
-#include "WheelCommand.hpp"
-#include "WheelState.hpp"
+#include "motor/controller/include/MotorState.hpp"
+#include "motor/controller/include/WheelCommand.hpp"
+#include "motor/controller/include/WheelState.hpp"
 
 #include <stdint.h>
 
@@ -38,11 +35,16 @@
 // Those belong to: IMotorDriver
 //====================================================
 
-class MotorController final : public MotorControllerBase
+class MotorController final
 {
 public:
     // Constructor
-    MotorController(IMotorDriver &motorDriver, const MotorControllerConfig &config);
+    MotorController(
+        IMotorDriver &motorDriver,
+        IMutex &mutex,
+        ILogger &logger,
+        ITimer &timer,
+        const MotorControllerConfig &config);
 
     // Initialization
     bool initialize();
@@ -52,6 +54,8 @@ public:
 
     // Main locomotion execution pipeline, Input: MotionCommand, Output: MotorDriverCommand execution
     void executeMotion(const MotionCommand &motionCommand);
+
+    bool tryExecuteMotion(const MotionCommand &motionCommand);
 
     // Runtime update loop
     // Handles: synchronization, monitoring, fault handling, timeout supervision, execution state transitions
@@ -73,7 +77,7 @@ public:
     MotorState getCurrentState() const;
 
     // Runtime memory
-    const MotorControllerMemory &getMemory() const;
+    MotorControllerMemory getMemory() const;
 
     // Fault state
     bool hasFault() const;
@@ -144,8 +148,7 @@ private:
     generateMotorDriverCommand(
         MotorChannel channel,
         const WheelCommand &wheelCommand,
-        uint32_t sequenceId,
-        uint32_t timestampMs) const;
+        uint32_t sequenceId) const;
 
     // Execute synchronized wheel commands
     void executeWheelCommands(
@@ -181,27 +184,31 @@ private:
 
     bool validateStateTransition(MotorState currentState, MotorState newState) const;
 
-    void transitionToState(MotorState newState);
-
     void stopInternal();
 
     void emergencyStopInternal();
 
     bool validateDriverHealth() const;
 
-    bool MotorController::shouldSkipUpdate(uint32_t currentTimestampMs) const;
+    bool shouldSkipUpdate(uint32_t currentTimestampMs) const;
 
 private:
     // Hardware abstraction layer
     IMotorDriver &m_motorDriver;
 
-    // Configuration
-    MotorControllerConfig m_config;
-
     // Runtime locomotion memory
     MotorControllerMemory m_memory;
+
+    IMutex &m_mutex;
+
+    ILogger &m_logger;
+
+    ITimer &m_timer;
 
     // Runtime sequence generator: Generates unique execution sequence IDs.
     // Useful for: synchronization, telemetry, debugging, RTOS tracing
     uint32_t m_sequenceCounter = 0;
+
+    // Configuration
+    MotorControllerConfig m_config;
 };

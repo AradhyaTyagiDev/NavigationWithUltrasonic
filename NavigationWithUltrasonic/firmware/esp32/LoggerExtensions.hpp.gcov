@@ -1,0 +1,254 @@
+        -:    0:Source:lib/shared/interfaces/include/logging/LoggerExtensions.hpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcda
+        -:    0:Runs:1
+        -:    1:#pragma once
+        -:    2:
+        -:    3:#include "interfaces/include/logging/ILogger.hpp"
+        -:    4:#include "interfaces/include/logging/LoggerConfig.hpp"
+        -:    5:
+        -:    6:#include <cstdarg>
+        -:    7:
+        -:    8:namespace Logger
+        -:    9:{
+        -:   10:    // Internal helper
+        -:   11:    constexpr bool isCompileTimeEnabled(
+        -:   12:        LogLevel level)
+        -:   13:    {
+        -:   14:        return static_cast<int>(level) >=
+        -:   15:               static_cast<int>(LoggerConfig::MinimumLogLevel);
+        -:   16:    }
+        -:   17:
+        -:   18:    //------------------------------------------------
+        -:   19:    // Internal helper
+        -:   20:    //------------------------------------------------
+        -:   21:    inline void writeV(
+        -:   22:        ILogger &logger,
+        -:   23:        LogLevel level,
+        -:   24:        const char *component,
+        -:   25:        const char *format,
+        -:   26:        va_list args)
+        -:   27:    {
+        -:   28:        if (!logger.shouldLog(level))
+        -:   29:        {
+        -:   30:            return;
+        -:   31:        }
+        -:   32:
+        -:   33:        logger.logV(
+        -:   34:            level,
+        -:   35:            component,
+        -:   36:            format,
+        -:   37:            args);
+        -:   38:    }
+        -:   39:
+        -:   40:    //------------------------------------------------
+        -:   41:    // Internal helper
+        -:   42:    //------------------------------------------------
+        -:   43:
+        -:   44:    inline void write(
+        -:   45:        ILogger &logger,
+        -:   46:        LogLevel level,
+        -:   47:        const char *component,
+        -:   48:        const char *format,
+        -:   49:        ...)
+        -:   50:    {
+        -:   51:        if (!logger.shouldLog(level))
+        -:   52:        {
+        -:   53:            return;
+        -:   54:        }
+        -:   55:
+        -:   56:        va_list args;
+        -:   57:
+        -:   58:        va_start(
+        -:   59:            args,
+        -:   60:            format);
+        -:   61:
+        -:   62:        logger.logV(
+        -:   63:            level,
+        -:   64:            component,
+        -:   65:            format,
+        -:   66:            args);
+        -:   67:
+        -:   68:        va_end(args);
+        -:   69:    }
+        -:   70:
+        -:   71:    //------------------------------------------------
+        -:   72:    // Trace
+        -:   73:    //------------------------------------------------
+        -:   74:
+        -:   75:    inline void trace(
+        -:   76:        ILogger &logger,
+        -:   77:        const char *component,
+        -:   78:        const char *format,
+        -:   79:        ...)
+        -:   80:    {
+        -:   81:        if (!logger.shouldLog(LogLevel::Trace))
+        -:   82:        {
+        -:   83:            return;
+        -:   84:        }
+        -:   85:
+        -:   86:        va_list args;
+        -:   87:
+        -:   88:        va_start(
+        -:   89:            args,
+        -:   90:            format);
+        -:   91:
+        -:   92:        logger.logV(
+        -:   93:            LogLevel::Trace,
+        -:   94:            component,
+        -:   95:            format,
+        -:   96:            args);
+        -:   97:
+        -:   98:        va_end(args);
+        -:   99:    }
+        -:  100:
+        -:  101:    //------------------------------------------------
+        -:  102:    // Debug
+        -:  103:    //------------------------------------------------
+        -:  104:
+        -:  105:    inline void debug(
+        -:  106:        ILogger &logger,
+        -:  107:        const char *component,
+        -:  108:        const char *format,
+        -:  109:        ...)
+        -:  110:    {
+        -:  111:        if (!logger.shouldLog(LogLevel::Debug))
+        -:  112:        {
+        -:  113:            return;
+        -:  114:        }
+        -:  115:
+        -:  116:        va_list args;
+        -:  117:
+        -:  118:        va_start(
+        -:  119:            args,
+        -:  120:            format);
+        -:  121:
+        -:  122:        logger.logV(
+        -:  123:            LogLevel::Debug,
+        -:  124:            component,
+        -:  125:            format,
+        -:  126:            args);
+        -:  127:
+        -:  128:        va_end(args);
+        -:  129:    }
+        -:  130:
+        -:  131:    //------------------------------------------------
+        -:  132:    // Info
+        -:  133:    //------------------------------------------------
+        -:  134:
+    #####:  135:    inline void info(
+        -:  136:        ILogger &logger,
+        -:  137:        const char *component,
+        -:  138:        const char *format,
+        -:  139:        ...)
+        -:  140:    {
+    #####:  141:        if (!logger.shouldLog(LogLevel::Info))
+        -:  142:        {
+    #####:  143:            return;
+        -:  144:        }
+        -:  145:
+        -:  146:        va_list args;
+        -:  147:
+    #####:  148:        va_start(
+        -:  149:            args,
+        -:  150:            format);
+        -:  151:
+    #####:  152:        logger.logV(
+        -:  153:            LogLevel::Info,
+    #####:  154:            component,
+    #####:  155:            format,
+    #####:  156:            args);
+        -:  157:
+    #####:  158:        va_end(args);
+    #####:  159:    }
+        -:  160:
+        -:  161:    //------------------------------------------------
+        -:  162:    // Warning
+        -:  163:    //------------------------------------------------
+        -:  164:
+        -:  165:    inline void warning(
+        -:  166:        ILogger &logger,
+        -:  167:        const char *component,
+        -:  168:        const char *format,
+        -:  169:        ...)
+        -:  170:    {
+        -:  171:        if (!logger.shouldLog(LogLevel::Warning))
+        -:  172:        {
+        -:  173:            return;
+        -:  174:        }
+        -:  175:
+        -:  176:        va_list args;
+        -:  177:
+        -:  178:        va_start(
+        -:  179:            args,
+        -:  180:            format);
+        -:  181:
+        -:  182:        logger.logV(
+        -:  183:            LogLevel::Warning,
+        -:  184:            component,
+        -:  185:            format,
+        -:  186:            args);
+        -:  187:
+        -:  188:        va_end(args);
+        -:  189:    }
+        -:  190:
+        -:  191:    //------------------------------------------------
+        -:  192:    // Error
+        -:  193:    //------------------------------------------------
+        -:  194:
+    #####:  195:    inline void error(
+        -:  196:        ILogger &logger,
+        -:  197:        const char *component,
+        -:  198:        const char *format,
+        -:  199:        ...)
+        -:  200:    {
+    #####:  201:        if (!logger.shouldLog(LogLevel::Error))
+        -:  202:        {
+    #####:  203:            return;
+        -:  204:        }
+        -:  205:
+        -:  206:        va_list args;
+        -:  207:
+    #####:  208:        va_start(
+        -:  209:            args,
+        -:  210:            format);
+        -:  211:
+    #####:  212:        logger.logV(
+        -:  213:            LogLevel::Error,
+    #####:  214:            component,
+    #####:  215:            format,
+    #####:  216:            args);
+        -:  217:
+    #####:  218:        va_end(args);
+    #####:  219:    }
+        -:  220:
+        -:  221:    //------------------------------------------------
+        -:  222:    // Critical
+        -:  223:    //------------------------------------------------
+        -:  224:
+        -:  225:    inline void critical(
+        -:  226:        ILogger &logger,
+        -:  227:        const char *component,
+        -:  228:        const char *format,
+        -:  229:        ...)
+        -:  230:    {
+        -:  231:        if (!logger.shouldLog(LogLevel::Critical))
+        -:  232:        {
+        -:  233:            return;
+        -:  234:        }
+        -:  235:
+        -:  236:        va_list args;
+        -:  237:
+        -:  238:        va_start(
+        -:  239:            args,
+        -:  240:            format);
+        -:  241:
+        -:  242:        logger.logV(
+        -:  243:            LogLevel::Critical,
+        -:  244:            component,
+        -:  245:            format,
+        -:  246:            args);
+        -:  247:
+        -:  248:        va_end(args);
+        -:  249:    }
+        -:  250:}

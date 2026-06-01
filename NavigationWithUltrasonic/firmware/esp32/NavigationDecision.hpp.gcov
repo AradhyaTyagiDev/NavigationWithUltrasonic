@@ -1,0 +1,65 @@
+        -:    0:Source:lib/shared/core/navigation/include/NavigationDecision.hpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcda
+        -:    0:Runs:1
+        -:    1:/*
+        -:    2:Final behavioral output.
+        -:    3:Consumed later by: MotionPlanner
+        -:    4:*/
+        -:    5:
+        -:    6:#pragma once
+        -:    7:
+        -:    8:#include <stdint.h>
+        -:    9:
+        -:   10:#include "NavigationState.hpp"
+        -:   11:#include "NavigationAction.hpp"
+        -:   12:#include "TurnDirection.hpp"
+        -:   13:#include "MovementProfile.hpp"
+        -:   14:
+    #####:   15:struct NavigationDecision
+        -:   16:{
+        -:   17:    // Navigation state
+    #####:   18:    NavigationState state = NavigationState::Idle;
+        -:   19:
+        -:   20:    // Desired movement action
+    #####:   21:    NavigationAction action = NavigationAction::Stop;
+        -:   22:
+        -:   23:    // Turn recommendation
+    #####:   24:    TurnDirection turnDirection = TurnDirection::None;
+        -:   25:
+        -:   26:    // Speed behavior profile
+    #####:   27:    MovementProfile movementProfile =
+        -:   28:        MovementProfile::Normal;
+        -:   29:
+        -:   30:    // Target speed percentage: Desired navigation speed. Useful to Turn and movement
+    #####:   31:    float targetSpeedPercent = 0.0f;
+        -:   32:
+        -:   33:    // Desired turn angle: Positive: right turn, Negative: left turn
+        -:   34:    // 0   = straight, 15  = gentle curve, 45  = normal avoidance, 90  = aggressive turn, 180 = escape rotation
+    #####:   35:    float desiredTurnAngleDeg = 0.0f;
+        -:   36:
+        -:   37:    // Desired turn aggressiveness, slow smooth turn, aggressive fast turn
+    #####:   38:    float desiredTurnRateDegPerSec = 0.0f;
+        -:   39:
+        -:   40:    // Desired stopping buffer distance. Useful for obstacle avoidance and emergency stop
+        -:   41:    // Supports: predictive braking, dynamic safety margins, cautious mode, smooth navigation
+    #####:   42:    float stopDistanceCm = 0.0f;
+        -:   43:
+        -:   44:    // Emergency behavior
+    #####:   45:    bool emergencyOverride = false;
+        -:   46:
+        -:   47:    // Escape behavior active
+    #####:   48:    bool escapeBehaviorActive = false;
+        -:   49:
+        -:   50:    // Obstacle avoidance active
+    #####:   51:    bool obstacleAvoidanceActive = false;
+        -:   52:
+        -:   53:    // Decision confidence
+    #####:   54:    float navigationConfidence = 1.0f;
+        -:   55:
+        -:   56:    // Behavioral persistence
+    #####:   57:    bool persistentBehavior = false;
+        -:   58:
+        -:   59:    // Timestamp
+    #####:   60:    uint32_t timestampMs = 0;
+        -:   61:};

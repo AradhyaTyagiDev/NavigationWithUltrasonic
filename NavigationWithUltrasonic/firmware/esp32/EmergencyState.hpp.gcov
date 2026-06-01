@@ -1,0 +1,122 @@
+        -:    0:Source:lib/shared/core/robot/include/EmergencyState.hpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcda
+        -:    0:Runs:1
+        -:    1://====================================================
+        -:    2:// File: EmergencyState.hpp
+        -:    3://====================================================
+        -:    4:
+        -:    5:#pragma once
+        -:    6:
+        -:    7:#include <stdint.h>
+        -:    8:
+        -:    9://====================================================
+        -:   10:// EmergencySeverity
+        -:   11://====================================================
+        -:   12:enum class EmergencySeverity
+        -:   13:{
+        -:   14:    // No emergency
+        -:   15:    None,
+        -:   16:
+        -:   17:    // Minor runtime issue
+        -:   18:    Warning,
+        -:   19:
+        -:   20:    // Critical runtime issue
+        -:   21:    Critical,
+        -:   22:
+        -:   23:    // Fatal runtime issue
+        -:   24:    Fatal
+        -:   25:};
+        -:   26:
+        -:   27://====================================================
+        -:   28:// EmergencySource
+        -:   29://====================================================
+        -:   30:enum class EmergencySource
+        -:   31:{
+        -:   32:    // Unknown source
+        -:   33:    Unknown,
+        -:   34:
+        -:   35:    // Sensor subsystem
+        -:   36:    Sensor,
+        -:   37:
+        -:   38:    // Obstacle subsystem
+        -:   39:    Obstacle,
+        -:   40:
+        -:   41:    // Navigation subsystem
+        -:   42:    Navigation,
+        -:   43:
+        -:   44:    // Motion subsystem
+        -:   45:    Motion,
+        -:   46:
+        -:   47:    // Motor subsystem
+        -:   48:    Motor,
+        -:   49:
+        -:   50:    // Driver subsystem
+        -:   51:    Driver,
+        -:   52:
+        -:   53:    // Runtime timing subsystem
+        -:   54:    Timing,
+        -:   55:
+        -:   56:    // Robot controller subsystem
+        -:   57:    Runtime
+        -:   58:};
+        -:   59:
+        -:   60:enum class EmergencyCode
+        -:   61:{
+        -:   62:    None,
+        -:   63:
+        -:   64:    SensorTimeout,
+        -:   65:
+        -:   66:    SensorFailure,
+        -:   67:
+        -:   68:    ObstacleCollisionRisk,
+        -:   69:
+        -:   70:    MotionInstability,
+        -:   71:
+        -:   72:    MotorDriverFault,
+        -:   73:
+        -:   74:    RuntimeTimingViolation,
+        -:   75:
+        -:   76:    PipelineTimeout,
+        -:   77:
+        -:   78:    EmergencyStopTriggered,
+        -:   79:
+        -:   80:    Unknown
+        -:   81:};
+        -:   82:
+        -:   83://====================================================
+        -:   84:// EmergencyState
+        -:   85://====================================================
+        -:   86:// Global robotics emergency runtime state.
+        -:   87://====================================================
+       36:   88:struct EmergencyState
+        -:   89:{
+        -:   90:    // Emergency active
+       36:   91:    bool emergencyActive = false;
+        -:   92:
+        -:   93:    // Emergency severity
+       36:   94:    EmergencySeverity severity = EmergencySeverity::None;
+        -:   95:
+        -:   96:    // Emergency source
+       36:   97:    EmergencySource source = EmergencySource::Unknown;
+        -:   98:
+       36:   99:    EmergencyCode code = EmergencyCode::None;
+        -:  100:
+        -:  101:    // Emergency stop triggered
+       36:  102:    bool emergencyStopTriggered = false;
+        -:  103:
+        -:  104:    // Recovery required
+       36:  105:    bool recoveryRequired = false;
+        -:  106:
+        -:  107:    // Manual reset required
+       36:  108:    bool manualResetRequired = false;
+        -:  109:
+        -:  110:    // Consecutive emergency count
+       36:  111:    uint32_t consecutiveEmergencyCount = 0;
+        -:  112:
+        -:  113:    // Last emergency timestamp
+       36:  114:    uint32_t lastEmergencyTimestampMs = 0;
+        -:  115:
+        -:  116:    // Emergency recovery timestamp
+       36:  117:    uint32_t recoveryTimestampMs = 0;
+        -:  118:};

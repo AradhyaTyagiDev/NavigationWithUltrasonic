@@ -1,18 +1,11 @@
-//====================================================
-// File: RobotController.cpp
-//====================================================
 
 #include "robot/include/RobotController.hpp"
 
-#include "esp_log.h"
-#include "esp_timer.h"
+#include "interfaces/include/logging/LoggerExtensions.hpp"
+#include "interfaces/include/synchronization/LockGuard.hpp"
 
 static const char *TAG =
     "RobotController";
-
-//====================================================
-// Constructor
-//====================================================
 
 RobotController::RobotController(
     IUltrasonicSensor &ultrasonicSensor,
@@ -21,6 +14,9 @@ RobotController::RobotController(
     NavigationManager &navigationManager,
     MotionPlanner &motionPlanner,
     MotorController &motorController,
+    IMutex &mutex,
+    ILogger &logger,
+    ITimer &timer,
     const RobotControllerConfig &config)
     : m_ultrasonicSensor(
           ultrasonicSensor),
@@ -40,65 +36,35 @@ RobotController::RobotController(
       m_motorController(
           motorController),
 
+      m_mutex(
+          mutex),
+
+      m_logger(
+          logger),
+
+      m_timer(
+          timer),
+
       m_config(config)
 {
 }
-
-//====================================================
-// Destructor
-//====================================================
 
 RobotController::~RobotController()
 {
     shutdown();
 }
 
-//====================================================
-// Initialization
-//====================================================
-
 bool RobotController::initialize()
 {
-    ScopedControllerLock lock(this);
-
-    //-----------------------------------------
-    // Already initialized
-    //-----------------------------------------
+    LockGuard lock(m_mutex);
 
     if (m_initialized)
     {
         return true;
     }
 
-    //-----------------------------------------
-    // Runtime state
-    //-----------------------------------------
-
     transitionToState(
         RobotState::Initializing);
-
-    //-----------------------------------------
-    // Create mutex
-    //-----------------------------------------
-
-    if (m_controllerMutex == nullptr)
-    {
-        m_controllerMutex =
-            xSemaphoreCreateMutex();
-
-        if (m_controllerMutex == nullptr)
-        {
-            ESP_LOGE(
-                TAG,
-                "Failed to create mutex");
-
-            return false;
-        }
-    }
-
-    //-----------------------------------------
-    // Initialize sensor
-    //-----------------------------------------
 
     if (!m_ultrasonicSensor.initialize())
     {
@@ -108,10 +74,6 @@ bool RobotController::initialize()
         return false;
     }
 
-    //-----------------------------------------
-    // Initialize motor controller
-    //-----------------------------------------
-
     if (!m_motorController.initialize())
     {
         handleFault(
@@ -120,15 +82,10 @@ bool RobotController::initialize()
         return false;
     }
 
-    //-----------------------------------------
-    // Reset runtime memory
-    //-----------------------------------------
-
     m_memory = {};
 
-    //-----------------------------------------
-    // Runtime timestamps
-    //-----------------------------------------
+    m_memory.behaviorMode =
+        m_config.behaviorMode;
 
     const uint32_t timestampMs =
         getCurrentTimestampMs();
@@ -139,10 +96,6 @@ bool RobotController::initialize()
     m_memory.lastHealthyRuntimeTimestampMs =
         timestampMs;
 
-    //-----------------------------------------
-    // Runtime state
-    //-----------------------------------------
-
     m_initialized = true;
 
     m_memory.initialized = true;
@@ -150,47 +103,23 @@ bool RobotController::initialize()
     transitionToState(
         RobotState::Active);
 
-    ESP_LOGI(
+    Logger::info(
+        m_logger,
         TAG,
         "RobotController initialized");
 
     return true;
 }
 
-//====================================================
-// Shutdown
-//====================================================
-
 void RobotController::shutdown()
 {
-    //-----------------------------------------
-    // Stop runtime. NEVER LOCK AROUND CALLS THAT INTERNALLY LOCK
-    //-----------------------------------------
     stop();
 
-    ScopedControllerLock lock(this);
-
-    //-----------------------------------------
-    // Shutdown motor controller
-    //-----------------------------------------
+    LockGuard lock(m_mutex);
 
     m_motorController.shutdown();
 
-    //-----------------------------------------
-    // Shutdown sensor
-    //-----------------------------------------
-
     m_ultrasonicSensor.shutdown();
-
-    //-----------------------------------------
-    // Destroy tasks
-    //-----------------------------------------
-
-    destroyTasks();
-
-    //-----------------------------------------
-    // Runtime state
-    //-----------------------------------------
 
     m_initialized = false;
 
@@ -199,52 +128,33 @@ void RobotController::shutdown()
     transitionToState(
         RobotState::Shutdown);
 
-    ESP_LOGI(
+    Logger::info(
+        m_logger,
         TAG,
         "RobotController shutdown");
 }
 
-//====================================================
-// Start runtime
-//====================================================
-
 bool RobotController::start()
 {
-    ScopedControllerLock lock(this);
-
-    //-----------------------------------------
-    // Must be initialized
-    //-----------------------------------------
+    LockGuard lock(m_mutex);
 
     if (!m_initialized)
     {
         return false;
     }
 
-    //-----------------------------------------
-    // Already running
-    //-----------------------------------------
-
     if (m_running)
     {
         return true;
     }
 
-    //-----------------------------------------
-    // Create RTOS tasks
-    //-----------------------------------------
-
-    if (!createTasks())
+    if (!m_ultrasonicSensor.start())
     {
         handleFault(
-            "Task creation failed");
+            "Ultrasonic sensor start failed");
 
         return false;
     }
-
-    //-----------------------------------------
-    // Runtime state
-    //-----------------------------------------
 
     m_running = true;
 
@@ -253,180 +163,110 @@ bool RobotController::start()
     transitionToState(
         RobotState::Active);
 
-    ESP_LOGI(
+    Logger::info(
+        m_logger,
         TAG,
         "RobotController started");
 
     return true;
 }
 
-//====================================================
-// Stop runtime
-//====================================================
-
 void RobotController::stop()
 {
-    ScopedControllerLock lock(this);
-
-    //-----------------------------------------
-    // Already stopped
-    //-----------------------------------------
+    LockGuard lock(m_mutex);
 
     if (!m_running)
     {
         return;
     }
 
-    //-----------------------------------------
-    // Runtime state
-    //-----------------------------------------
-
     m_running = false;
 
     m_memory.runtimeActive = false;
 
-    //-----------------------------------------
-    // Stop locomotion
-    //-----------------------------------------
-
     m_motorController.stop();
-
-    //-----------------------------------------
-    // Destroy tasks
-    //-----------------------------------------
-
-    destroyTasks();
-
-    //-----------------------------------------
-    // Runtime state
-    //-----------------------------------------
 
     transitionToState(
         RobotState::Paused);
 
-    ESP_LOGI(
+    Logger::info(
+        m_logger,
         TAG,
         "RobotController stopped");
 }
 
-//====================================================
-// Runtime update
-//====================================================
-
 void RobotController::update()
 {
+    if (!m_mutex.tryLock())
+    {
+        return;
+    }
+
+    if (!m_initialized || !m_running)
+    {
+        m_mutex.unlock();
+
+        return;
+    }
+
     const uint32_t currentTimestampMs =
         getCurrentTimestampMs();
 
     executePipeline(
         currentTimestampMs);
-}
 
-//====================================================
-// Main robotics pipeline
-//====================================================
+    m_mutex.unlock();
+}
 
 void RobotController::executePipeline(
     uint32_t currentTimestampMs)
 {
-    //-----------------------------------------
-    // Begin timing
-    //-----------------------------------------
 
     beginPipelineTiming(
         currentTimestampMs);
 
-    //-----------------------------------------
-    // Runtime statistics
-    //-----------------------------------------
-
     m_memory.runtimeStatistics
         .totalControlLoops++;
-
-    //-----------------------------------------
-    // Sensor stage
-    //-----------------------------------------
 
     executeSensorStage(
         currentTimestampMs);
 
-    //-----------------------------------------
-    // Filter stage
-    //-----------------------------------------
-
     executeFilterStage(
         currentTimestampMs);
-
-    //-----------------------------------------
-    // Obstacle stage
-    //-----------------------------------------
 
     executeObstacleStage(
         currentTimestampMs);
 
-    //-----------------------------------------
-    // Navigation stage
-    //-----------------------------------------
-
     executeNavigationStage(
         currentTimestampMs);
-
-    //-----------------------------------------
-    // Motion stage
-    //-----------------------------------------
 
     executeMotionStage(
         currentTimestampMs);
 
-    //-----------------------------------------
-    // Motor stage
-    //-----------------------------------------
-
     executeMotorStage(
         currentTimestampMs);
-
-    //-----------------------------------------
-    // Monitoring stage
-    //-----------------------------------------
 
     executeMonitoringStage(
         currentTimestampMs);
 
-    //-----------------------------------------
-    // Runtime memory
-    //-----------------------------------------
-
     updateRuntimeMemory(
         currentTimestampMs);
 
-    //-----------------------------------------
-    // End timing
-    //-----------------------------------------
-
     endPipelineTiming(
         currentTimestampMs);
-
-    //-----------------------------------------
-    // Success statistics
-    //-----------------------------------------
 
     m_memory.runtimeStatistics
         .successfulControlLoops++;
 }
 
-//====================================================
-// Sensor stage
-//====================================================
 void RobotController::executeSensorStage(uint32_t currentTimestampMs)
 {
-    const uint64_t startUs = esp_timer_get_time();
+    const uint32_t startUs = getCurrentTimestampUs();
 
-    // Fetch latest sensor frame
     UltrasonicSensorData latestData;
 
     const bool received = m_ultrasonicSensor.fetchLatestData(latestData);
 
-    // Fresh data available
     if (received)
     {
         m_latestSensorData = latestData;
@@ -435,15 +275,14 @@ void RobotController::executeSensorStage(uint32_t currentTimestampMs)
 
         m_memory.runtimeStatistics.sensorUpdates++;
 
-        // Healthy timestamp
+        m_memory.runtimeFlags.sensorTimeoutActive = false;
+
         m_memory.lastHealthyRuntimeTimestampMs = currentTimestampMs;
     }
     else
     {
-        // No fresh perception frame
         m_memory.sensorDataAvailable = false;
 
-        // Sensor timeout supervision
         const uint32_t elapsedMs = currentTimestampMs - m_latestSensorData.timestampMs;
 
         if (elapsedMs > m_config.sensorTimeoutMs)
@@ -456,149 +295,97 @@ void RobotController::executeSensorStage(uint32_t currentTimestampMs)
         }
     }
 
-    // Stage timing
-    m_memory.pipelineTiming.sensorStageDurationUs = static_cast<uint32_t>(esp_timer_get_time() - startUs);
+    m_memory.pipelineTiming.sensorStageDurationUs =
+        getCurrentTimestampUs() -
+        startUs;
 }
 
-//====================================================
-// Filter stage
-//====================================================
 void RobotController::executeFilterStage(uint32_t currentTimestampMs)
 {
-    const uint64_t startUs = esp_timer_get_time();
+    const uint32_t startUs = getCurrentTimestampUs();
 
-    // Sensor data available
     if (!m_memory.sensorDataAvailable)
     {
         return;
     }
 
-    // Filter perception
     m_latestFilteredData =
         m_ultrasonicFilter.process(
             m_latestSensorData.pulseWidthUs,
             m_latestSensorData.timestampMs);
 
-    // Timing
     m_memory.pipelineTiming
         .filterStageDurationUs =
-        static_cast<uint32_t>(
-            esp_timer_get_time() -
-            startUs);
+        getCurrentTimestampUs() -
+        startUs;
 
     (void)currentTimestampMs;
 }
 
-//====================================================
-// Obstacle stage
-//====================================================
 void RobotController::executeObstacleStage(
     uint32_t currentTimestampMs)
 {
     const uint64_t startUs =
-        esp_timer_get_time();
+        getCurrentTimestampUs();
 
-    // Validate filtered perception
     if (!m_memory.sensorDataAvailable)
     {
         return;
     }
 
-    // Environment interpretation
     m_latestObstacleAnalysis =
         m_obstacleManager.process(
             m_latestFilteredData,
             currentTimestampMs);
 
-    // Statistics
     m_memory.runtimeStatistics
         .obstacleAnalyses++;
 
-    // Timing
     m_memory.pipelineTiming
         .obstacleStageDurationUs =
-        static_cast<uint32_t>(
-            esp_timer_get_time() -
-            startUs);
+        getCurrentTimestampUs() -
+        startUs;
 }
-
-//====================================================
-// Navigation stage
-//====================================================
 
 void RobotController::executeNavigationStage(
     uint32_t currentTimestampMs)
 {
     const uint64_t startUs =
-        esp_timer_get_time();
-
-    //-----------------------------------------
-    // Navigation decision
-    //-----------------------------------------
+        getCurrentTimestampUs();
 
     m_latestNavigationDecision =
         m_navigationManager.process(
             m_latestObstacleAnalysis,
             currentTimestampMs);
 
-    //-----------------------------------------
-    // Statistics
-    //-----------------------------------------
-
     m_memory.runtimeStatistics
         .navigationDecisions++;
 
-    //-----------------------------------------
-    // Timing
-    //-----------------------------------------
-
     m_memory.pipelineTiming
         .navigationStageDurationUs =
-        static_cast<uint32_t>(
-            esp_timer_get_time() -
-            startUs);
+        getCurrentTimestampUs() -
+        startUs;
 }
-
-//====================================================
-// Motion stage
-//====================================================
 
 void RobotController::executeMotionStage(
     uint32_t currentTimestampMs)
 {
     const uint64_t startUs =
-        esp_timer_get_time();
-
-    //-----------------------------------------
-    // Motion planning
-    //-----------------------------------------
+        getCurrentTimestampUs();
 
     m_latestMotionCommand =
         m_motionPlanner.process(
             m_latestNavigationDecision,
             currentTimestampMs);
 
-    //-----------------------------------------
-    // Statistics
-    //-----------------------------------------
-
     m_memory.runtimeStatistics
         .motionPlans++;
 
-    //-----------------------------------------
-    // Timing
-    //-----------------------------------------
-
     m_memory.pipelineTiming
         .motionStageDurationUs =
-        static_cast<uint32_t>(
-            esp_timer_get_time() -
-            startUs);
+        getCurrentTimestampUs() -
+        startUs;
 }
-
-//====================================================
-// Motor stage
-//====================================================
 
 void RobotController::executeMotorStage(
     uint32_t currentTimestampMs)
@@ -609,38 +396,39 @@ void RobotController::executeMotorStage(
     }
 
     const uint64_t startUs =
-        esp_timer_get_time();
+        getCurrentTimestampUs();
 
-    //-----------------------------------------
-    // Execute locomotion
-    //-----------------------------------------
+    const bool submitted =
+        m_motorController.tryExecuteMotion(
+            m_latestMotionCommand);
 
-    m_motorController.executeMotion(
-        m_latestMotionCommand);
+    if (!submitted)
+    {
+        m_memory.runtimeStatistics
+            .missedControlCycles++;
 
-    //-----------------------------------------
-    // Statistics
-    //-----------------------------------------
+        m_memory.consecutiveMissedCycles++;
+
+        m_memory.pipelineTiming
+            .motorStageDurationUs =
+            getCurrentTimestampUs() -
+            startUs;
+
+        return;
+    }
 
     m_memory.runtimeStatistics
         .motorExecutions++;
 
-    //-----------------------------------------
-    // Timing
-    //-----------------------------------------
+    m_memory.consecutiveMissedCycles = 0;
 
     m_memory.pipelineTiming
         .motorStageDurationUs =
-        static_cast<uint32_t>(
-            esp_timer_get_time() -
-            startUs);
+        getCurrentTimestampUs() -
+        startUs;
 
     (void)currentTimestampMs;
 }
-
-//====================================================
-// Monitoring stage
-//====================================================
 
 void RobotController::executeMonitoringStage(
     uint32_t currentTimestampMs)
@@ -656,43 +444,28 @@ void RobotController::executeMonitoringStage(
 
     performFaultMonitoring(
         currentTimestampMs);
-}
 
-//====================================================
-// Health monitoring
-//====================================================
+    updateSystemHealth();
+
+    updateRuntimeStatistics();
+}
 
 void RobotController::performHealthMonitoring(
     uint32_t currentTimestampMs)
 {
-    //-----------------------------------------
-    // Sensor health
-    //-----------------------------------------
 
     m_memory.systemHealth
         .sensorHealthy =
-        !m_latestFilteredData
-             .timeoutOccurred;
-
-    //-----------------------------------------
-    // Motor health
-    //-----------------------------------------
+        !m_memory.runtimeFlags.sensorTimeoutActive &&
+        !m_latestFilteredData.timeoutOccurred;
 
     m_memory.systemHealth
         .motorHealthy =
         !m_motorController.hasFault();
 
-    //-----------------------------------------
-    // Driver health
-    //-----------------------------------------
-
     m_memory.systemHealth
         .driverHealthy =
         !m_motorController.hasFault();
-
-    //-----------------------------------------
-    // Global health
-    //-----------------------------------------
 
     m_memory.systemHealth
         .systemHealthy =
@@ -702,10 +475,6 @@ void RobotController::performHealthMonitoring(
              .motorHealthy &&
          m_memory.systemHealth
              .driverHealthy);
-
-    //-----------------------------------------
-    // Healthy timestamp
-    //-----------------------------------------
 
     if (
         m_memory.systemHealth
@@ -717,10 +486,6 @@ void RobotController::performHealthMonitoring(
     }
 }
 
-//====================================================
-// Timing supervision
-//====================================================
-
 void RobotController::performTimingSupervision(
     uint32_t currentTimestampMs)
 {
@@ -729,10 +494,6 @@ void RobotController::performTimingSupervision(
     const uint32_t loopDurationUs =
         m_memory.pipelineTiming
             .controlLoopDurationUs;
-
-    //-----------------------------------------
-    // Timing violation
-    //-----------------------------------------
 
     if (
         hasPipelineTimingViolation(
@@ -751,18 +512,15 @@ void RobotController::performTimingSupervision(
     }
 }
 
-//====================================================
-// Emergency supervision
-//====================================================
-
 void RobotController::performEmergencySupervision(
     uint32_t currentTimestampMs)
 {
     (void)currentTimestampMs;
 
-    //-----------------------------------------
-    // Obstacle emergency
-    //-----------------------------------------
+    if (!shouldTriggerEmergency())
+    {
+        return;
+    }
 
     if (
         m_latestObstacleAnalysis
@@ -774,20 +532,25 @@ void RobotController::performEmergencySupervision(
             EmergencyCode::
                 ObstacleCollisionRisk);
     }
+    else if (m_motorController.isEmergencyStopActive())
+    {
+        triggerEmergency(
+            EmergencySeverity::Critical,
+            EmergencySource::Runtime,
+            EmergencyCode::
+                EmergencyStopTriggered);
+    }
 }
-
-//====================================================
-// Fault monitoring
-//====================================================
 
 void RobotController::performFaultMonitoring(
     uint32_t currentTimestampMs)
 {
     (void)currentTimestampMs;
 
-    //-----------------------------------------
-    // Motor controller fault
-    //-----------------------------------------
+    if (m_memory.systemHealth.faultActive)
+    {
+        recoverFromFault();
+    }
 
     if (m_motorController.hasFault())
     {
@@ -796,13 +559,9 @@ void RobotController::performFaultMonitoring(
     }
 }
 
-//====================================================
-// Emergency stop
-//====================================================
-
 void RobotController::emergencyStop()
 {
-    ScopedControllerLock lock(this);
+    LockGuard lock(m_mutex);
 
     triggerEmergency(
         EmergencySeverity::Critical,
@@ -810,10 +569,6 @@ void RobotController::emergencyStop()
         EmergencyCode::
             EmergencyStopTriggered);
 }
-
-//====================================================
-// Trigger emergency
-//====================================================
 
 void RobotController::triggerEmergency(
     EmergencySeverity severity,
@@ -824,10 +579,6 @@ void RobotController::triggerEmergency(
     {
         return;
     }
-
-    //-----------------------------------------
-    // Emergency state
-    //-----------------------------------------
 
     m_memory.emergencyState
         .emergencyActive = true;
@@ -849,99 +600,64 @@ void RobotController::triggerEmergency(
         .lastEmergencyTimestampMs =
         getCurrentTimestampMs();
 
-    //-----------------------------------------
-    // Runtime flags
-    //-----------------------------------------
-
     m_memory.runtimeFlags
         .emergencyActive = true;
 
-    //-----------------------------------------
-    // Statistics
-    //-----------------------------------------
+    m_memory.systemHealth
+        .emergencyActive = true;
+
+    m_memory.systemHealth
+        .systemHealthy = false;
 
     m_memory.runtimeStatistics
         .emergencyStops++;
 
-    //-----------------------------------------
-    // Stop locomotion
-    //-----------------------------------------
-
     m_motorController
         .emergencyStop();
-
-    //-----------------------------------------
-    // Runtime state
-    //-----------------------------------------
 
     transitionToState(
         RobotState::Emergency);
 
-    ESP_LOGE(
+    Logger::error(
+        m_logger,
         TAG,
         "Emergency triggered");
 }
 
-//====================================================
-// Clear emergency
-//====================================================
-
 void RobotController::clearEmergency()
 {
-    ScopedControllerLock lock(this);
+    LockGuard lock(m_mutex);
 
     clearEmergencyInternal();
 }
 
-//====================================================
-// Internal emergency clear
-//====================================================
-
 void RobotController::clearEmergencyInternal()
 {
-    //-----------------------------------------
-    // Clear runtime emergency
-    //-----------------------------------------
 
     m_memory.emergencyState =
         {};
 
-    //-----------------------------------------
-    // Runtime flags
-    //-----------------------------------------
-
     m_memory.runtimeFlags
         .emergencyActive = false;
 
-    //-----------------------------------------
-    // Clear motor controller emergency
-    //-----------------------------------------
+    m_memory.systemHealth
+        .emergencyActive = false;
 
     m_motorController
         .clearEmergencyStop();
 
-    //-----------------------------------------
-    // Runtime state
-    //-----------------------------------------
-
     transitionToState(
         RobotState::Active);
 
-    ESP_LOGI(
+    Logger::info(
+        m_logger,
         TAG,
         "Emergency cleared");
 }
 
-//====================================================
-// State transition
-//====================================================
-
 void RobotController::transitionToState(
     RobotState newState)
 {
-    //-----------------------------------------
-    // Validate transition
-    //-----------------------------------------
 
     if (
         !validateStateTransition(
@@ -951,31 +667,15 @@ void RobotController::transitionToState(
         return;
     }
 
-    //-----------------------------------------
-    // Previous state
-    //-----------------------------------------
-
     m_memory.previousState =
         m_memory.currentState;
-
-    //-----------------------------------------
-    // Current state
-    //-----------------------------------------
 
     m_memory.currentState =
         newState;
 
-    //-----------------------------------------
-    // Timestamp
-    //-----------------------------------------
-
     m_memory.lastStateTransitionTimestampMs =
         getCurrentTimestampMs();
 }
-
-//====================================================
-// Validate state transition
-//====================================================
 
 bool RobotController::validateStateTransition(
     RobotState currentState,
@@ -989,7 +689,9 @@ bool RobotController::validateStateTransition(
         currentState ==
             RobotState::Fault &&
         newState !=
-            RobotState::Shutdown)
+            RobotState::Shutdown &&
+        newState !=
+            RobotState::Paused)
     {
         return false;
     }
@@ -997,89 +699,64 @@ bool RobotController::validateStateTransition(
     return true;
 }
 
-//====================================================
-// Fault handling
-//====================================================
-
 void RobotController::handleFault(
     const char *reason)
 {
-    //-----------------------------------------
-    // Runtime state
-    //-----------------------------------------
+    if (m_memory.systemHealth.faultActive)
+    {
+        return;
+    }
 
     transitionToState(
         RobotState::Fault);
 
-    //-----------------------------------------
-    // System health
-    //-----------------------------------------
-
     m_memory.systemHealth
         .faultActive = true;
 
-    //-----------------------------------------
-    // Statistics
-    //-----------------------------------------
+    m_memory.systemHealth
+        .consecutiveFaultCount++;
+
+    m_memory.systemHealth
+        .lastFaultTimestampMs =
+        getCurrentTimestampMs();
 
     m_memory.runtimeStatistics
         .totalFaults++;
 
-    //-----------------------------------------
-    // Stop locomotion
-    //-----------------------------------------
-
     m_motorController
         .emergencyStop();
 
-    ESP_LOGE(
+    Logger::error(
+        m_logger,
         TAG,
         "RobotController fault: %s",
         reason);
 }
 
-//====================================================
-// Begin timing
-//====================================================
-
 void RobotController::beginPipelineTiming(
     uint32_t currentTimestampMs)
 {
     m_pipelineStartTimestampUs =
-        static_cast<uint32_t>(
-            esp_timer_get_time());
+        getCurrentTimestampUs();
 
     m_memory.pipelineTiming
         .lastUpdateTimestampMs =
         currentTimestampMs;
 }
 
-//====================================================
-// End timing
-//====================================================
-
 void RobotController::endPipelineTiming(
     uint32_t currentTimestampMs)
 {
     const uint32_t endUs =
-        static_cast<uint32_t>(
-            esp_timer_get_time());
+        getCurrentTimestampUs();
 
     const uint32_t durationUs =
         endUs -
         m_pipelineStartTimestampUs;
 
-    //-----------------------------------------
-    // Timing
-    //-----------------------------------------
-
     m_memory.pipelineTiming
         .controlLoopDurationUs =
         durationUs;
-
-    //-----------------------------------------
-    // Worst case
-    //-----------------------------------------
 
     if (
         durationUs >
@@ -1091,29 +768,17 @@ void RobotController::endPipelineTiming(
             durationUs;
     }
 
-    //-----------------------------------------
-    // Statistics
-    //-----------------------------------------
-
     updatePipelineStatistics(
         durationUs);
 
     (void)currentTimestampMs;
 }
 
-//====================================================
-// Update pipeline statistics
-//====================================================
-
 void RobotController::updatePipelineStatistics(
     uint32_t pipelineDurationUs)
 {
     auto &timing =
         m_memory.pipelineTiming;
-
-    //-----------------------------------------
-    // Running average
-    //-----------------------------------------
 
     timing.averageLoopDurationUs =
         ((
@@ -1122,10 +787,6 @@ void RobotController::updatePipelineStatistics(
          pipelineDurationUs) /
         m_pipelineExecutionCounter;
 }
-
-//====================================================
-// Timing violation
-//====================================================
 
 bool RobotController::hasPipelineTimingViolation(
     uint32_t pipelineDurationUs) const
@@ -1136,301 +797,115 @@ bool RobotController::hasPipelineTimingViolation(
             .maximumPipelineDurationUs);
 }
 
-//====================================================
-// Create RTOS tasks
-//====================================================
-bool RobotController::createTasks()
+void RobotController::reset()
 {
-    //-----------------------------------------
-    // Controller task
-    //-----------------------------------------
+    LockGuard lock(m_mutex);
 
-    BaseType_t result =
-        xTaskCreatePinnedToCore(
-            controllerTaskEntry,
-            "RobotControllerTask",
-            m_config.taskConfig
-                .controllerTaskStackSize,
-            this,
-            m_config.taskConfig
-                .controllerTaskPriority,
-            &m_controllerTaskHandle,
-            m_config.taskConfig
-                .controllerCore);
+    m_motorController.reset();
 
-    //-----------------------------------------
-    // Task creation failed
-    //-----------------------------------------
+    m_memory = {};
 
-    if (result != pdPASS)
-    {
-        ESP_LOGE(
-            TAG,
-            "Failed to create controller task");
+    m_latestSensorData = {};
+    m_latestFilteredData = {};
+    m_latestObstacleAnalysis = {};
+    m_latestNavigationDecision = {};
+    m_latestMotionCommand = {};
 
-        destroyTasks();
+    m_running = false;
+    m_pipelineExecutionCounter = 0;
+    m_pipelineStartTimestampUs = 0;
 
-        return false;
-    }
+    const uint32_t timestampMs =
+        getCurrentTimestampMs();
 
-    //-----------------------------------------
-    // Driver task
-    //-----------------------------------------
+    m_memory.initialized =
+        m_initialized;
 
-    result =
-        xTaskCreatePinnedToCore(
-            driverTaskEntry,
-            "MotorDriverTask",
-            m_config.taskConfig
-                .driverTaskStackSize,
-            this,
-            m_config.taskConfig
-                .driverTaskPriority,
-            &m_driverTaskHandle,
-            m_config.taskConfig
-                .driverCore);
+    m_memory.behaviorMode =
+        m_config.behaviorMode;
 
-    //-----------------------------------------
-    // Task creation failed
-    //-----------------------------------------
+    m_memory.runtimeStartTimestampMs =
+        timestampMs;
 
-    if (result != pdPASS)
-    {
-        ESP_LOGE(
-            TAG,
-            "Failed to create driver task");
+    m_memory.lastHealthyRuntimeTimestampMs =
+        timestampMs;
 
-        destroyTasks();
+    transitionToState(
+        m_initialized
+            ? RobotState::Paused
+            : RobotState::Booting);
 
-        return false;
-    }
-
-    //-----------------------------------------
-    // Telemetry task
-    //-----------------------------------------
-
-    result =
-        xTaskCreatePinnedToCore(
-            telemetryTaskEntry,
-            "TelemetryTask",
-            m_config.taskConfig
-                .telemetryTaskStackSize,
-            this,
-            m_config.taskConfig
-                .telemetryTaskPriority,
-            &m_telemetryTaskHandle,
-            m_config.taskConfig
-                .telemetryCore);
-
-    //-----------------------------------------
-    // Task creation failed
-    //-----------------------------------------
-
-    if (result != pdPASS)
-    {
-        ESP_LOGE(
-            TAG,
-            "Failed to create telemetry task");
-
-        destroyTasks();
-
-        return false;
-    }
-
-    //-----------------------------------------
-    // Success
-    //-----------------------------------------
-
-    ESP_LOGI(
+    Logger::info(
+        m_logger,
         TAG,
-        "All RTOS tasks created successfully");
-
-    return true;
+        "RobotController reset");
 }
 
-//====================================================
-// Destroy tasks
-//====================================================
-
-void RobotController::destroyTasks()
+bool RobotController::shouldTriggerEmergency() const
 {
-    if (m_controllerTaskHandle != nullptr)
-    {
-        vTaskDelete(
-            m_controllerTaskHandle);
+    return (
+        m_latestObstacleAnalysis.emergencyDetected ||
+        m_motorController.isEmergencyStopActive());
+}
 
-        m_controllerTaskHandle =
-            nullptr;
+void RobotController::recoverFromFault()
+{
+    if (!m_config.enableAutomaticFaultRecovery)
+    {
+        return;
     }
 
-    if (m_driverTaskHandle != nullptr)
-    {
-        vTaskDelete(
-            m_driverTaskHandle);
+    const uint32_t currentTimestampMs =
+        getCurrentTimestampMs();
 
-        m_driverTaskHandle =
-            nullptr;
+    const uint32_t elapsedMs =
+        currentTimestampMs -
+        m_memory.systemHealth.lastFaultTimestampMs;
+
+    if (elapsedMs < m_config.faultRecoveryCooldownMs)
+    {
+        return;
     }
 
-    if (m_telemetryTaskHandle != nullptr)
-    {
-        vTaskDelete(
-            m_telemetryTaskHandle);
+    m_memory.systemHealth.faultActive =
+        false;
 
-        m_telemetryTaskHandle =
-            nullptr;
-    }
+    m_memory.systemHealth.consecutiveFaultCount =
+        0;
+
+    m_motorController.reset();
+
+    transitionToState(
+        RobotState::Paused);
 }
 
-//====================================================
-// Controller task entry
-//====================================================
-
-void RobotController::controllerTaskEntry(
-    void *context)
+bool RobotController::validateRuntimeHealth() const
 {
-    auto *controller =
-        static_cast<RobotController *>(
-            context);
-
-    controller->controllerTaskLoop();
+    return (
+        validateSubsystemHealth() &&
+        validateTimingHealth() &&
+        validateEmergencyState());
 }
 
-//====================================================
-// Driver task entry
-//====================================================
-
-void RobotController::driverTaskEntry(
-    void *context)
+bool RobotController::validateSubsystemHealth() const
 {
-    auto *controller =
-        static_cast<RobotController *>(
-            context);
-
-    controller->driverTaskLoop();
+    return (
+        m_memory.systemHealth.sensorHealthy &&
+        !m_motorController.hasFault());
 }
 
-//====================================================
-// Telemetry task entry
-//====================================================
-
-void RobotController::telemetryTaskEntry(
-    void *context)
+bool RobotController::validateTimingHealth() const
 {
-    auto *controller =
-        static_cast<RobotController *>(
-            context);
-
-    controller->telemetryTaskLoop();
+    return !hasPipelineTimingViolation(
+        m_memory.pipelineTiming
+            .controlLoopDurationUs);
 }
 
-//====================================================
-// Controller task loop
-//====================================================
-void RobotController::controllerTaskLoop()
+bool RobotController::validateEmergencyState() const
 {
-    TickType_t previousWakeTime =
-        xTaskGetTickCount();
-
-    const TickType_t frequency =
-        pdMS_TO_TICKS(
-            1000 /
-            m_config.taskConfig
-                .controllerHz);
-
-    while (m_running)
-    {
-        update();
-
-        vTaskDelayUntil(
-            &previousWakeTime,
-            frequency);
-    }
+    return !m_memory.emergencyState
+                .emergencyActive;
 }
-
-//====================================================
-// Driver task loop
-//====================================================
-
-void RobotController::driverTaskLoop()
-{
-    TickType_t previousWakeTime =
-        xTaskGetTickCount();
-
-    const TickType_t frequency =
-        pdMS_TO_TICKS(
-            1000 /
-            m_config.taskConfig
-                .driverHz);
-
-    while (m_running)
-    {
-        m_motorController.update(
-            getCurrentTimestampMs());
-
-        vTaskDelayUntil(
-            &previousWakeTime,
-            frequency);
-    }
-}
-
-//====================================================
-// Telemetry task loop
-//====================================================
-
-void RobotController::telemetryTaskLoop()
-{
-    TickType_t previousWakeTime =
-        xTaskGetTickCount();
-
-    const TickType_t frequency =
-        pdMS_TO_TICKS(
-            1000 /
-            m_config.taskConfig
-                .telemetryHz);
-
-    while (m_running)
-    {
-        //-----------------------------------------
-        // Future telemetry
-        //-----------------------------------------
-
-        vTaskDelayUntil(
-            &previousWakeTime,
-            frequency);
-    }
-}
-
-//====================================================
-// Lock
-//====================================================
-
-void RobotController::lockController()
-{
-    if (m_controllerMutex != nullptr)
-    {
-        xSemaphoreTake(
-            m_controllerMutex,
-            portMAX_DELAY);
-    }
-}
-
-//====================================================
-// Unlock
-//====================================================
-
-void RobotController::unlockController()
-{
-    if (m_controllerMutex != nullptr)
-    {
-        xSemaphoreGive(
-            m_controllerMutex);
-    }
-}
-
-//====================================================
-// Runtime memory
-//====================================================
 
 const RobotControllerMemory &
 RobotController::getMemory() const
@@ -1438,19 +913,11 @@ RobotController::getMemory() const
     return m_memory;
 }
 
-//====================================================
-// System health
-//====================================================
-
 const SystemHealth &
 RobotController::getSystemHealth() const
 {
     return m_memory.systemHealth;
 }
-
-//====================================================
-// Runtime state
-//====================================================
 
 RobotState
 RobotController::getCurrentState() const
@@ -1458,18 +925,10 @@ RobotController::getCurrentState() const
     return m_memory.currentState;
 }
 
-//====================================================
-// Runtime active
-//====================================================
-
 bool RobotController::isRunning() const
 {
     return m_running;
 }
-
-//====================================================
-// Emergency active
-//====================================================
 
 bool RobotController::isEmergencyActive() const
 {
@@ -1478,10 +937,6 @@ bool RobotController::isEmergencyActive() const
         .emergencyActive;
 }
 
-//====================================================
-// Fault active
-//====================================================
-
 bool RobotController::hasFault() const
 {
     return m_memory
@@ -1489,19 +944,11 @@ bool RobotController::hasFault() const
         .faultActive;
 }
 
-//====================================================
-// Behavior mode
-//====================================================
-
 RobotBehaviorMode
 RobotController::getBehaviorMode() const
 {
     return m_memory.behaviorMode;
 }
-
-//====================================================
-// Set behavior mode
-//====================================================
 
 void RobotController::setBehaviorMode(
     RobotBehaviorMode mode)
@@ -1510,48 +957,69 @@ void RobotController::setBehaviorMode(
         mode;
 }
 
-//====================================================
-// Runtime memory update
-//====================================================
-
 void RobotController::updateRuntimeMemory(
     uint32_t currentTimestampMs)
 {
-    //-----------------------------------------
-    // Runtime timestamp
-    //-----------------------------------------
 
     m_memory.lastRuntimeUpdateTimestampMs =
         currentTimestampMs;
 
-    //-----------------------------------------
-    // Pipeline timestamp
-    //-----------------------------------------
-
     m_memory.lastPipelineTimestampMs =
         currentTimestampMs;
-
-    //-----------------------------------------
-    // Runtime duration
-    //-----------------------------------------
 
     m_memory.totalRuntimeDurationMs =
         currentTimestampMs -
         m_memory.runtimeStartTimestampMs;
 
-    //-----------------------------------------
-    // Pipeline execution counter
-    //-----------------------------------------
-
     m_pipelineExecutionCounter++;
 }
 
-//====================================================
-// Timestamp utility
-//====================================================
+void RobotController::updateRuntimeStatistics()
+{
+    m_memory.runtimeStatistics
+        .lastStatisticsUpdateTimestampMs =
+        getCurrentTimestampMs();
+}
+
+void RobotController::updateSystemHealth()
+{
+    m_memory.systemHealth
+        .sensorHealthy =
+        m_ultrasonicSensor.isHealthy() &&
+        !m_memory.runtimeFlags.sensorTimeoutActive &&
+        !m_latestFilteredData.timeoutOccurred;
+
+    m_memory.systemHealth
+        .motorHealthy =
+        !m_motorController.hasFault();
+
+    m_memory.systemHealth
+        .driverHealthy =
+        m_memory.systemHealth
+            .motorHealthy;
+
+    m_memory.systemHealth
+        .emergencyActive =
+        m_memory.emergencyState
+            .emergencyActive;
+
+    m_memory.systemHealth
+        .timingHealthy =
+        validateTimingHealth();
+
+    m_memory.systemHealth
+        .systemHealthy =
+        validateRuntimeHealth();
+}
 
 uint32_t RobotController::getCurrentTimestampMs() const
 {
+    return Timer::milliseconds(
+        m_timer);
+}
+
+uint32_t RobotController::getCurrentTimestampUs() const
+{
     return static_cast<uint32_t>(
-        esp_timer_get_time() / 1000ULL);
+        m_timer.getTimestampUs());
 }

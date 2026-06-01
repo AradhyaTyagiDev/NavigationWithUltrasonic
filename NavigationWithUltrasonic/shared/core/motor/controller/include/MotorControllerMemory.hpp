@@ -6,8 +6,8 @@
 
 #pragma once
 
-#include "MotorState.hpp"
-#include "WheelState.hpp"
+#include "motor/controller/include/MotorState.hpp"
+#include "motor/controller/include/WheelState.hpp"
 
 #include <stdint.h>
 

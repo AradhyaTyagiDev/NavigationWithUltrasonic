@@ -1,0 +1,757 @@
+        -:    0:Source:lib/shared/core/navigation/src/NavigationManager.cpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-NavigationManager.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-NavigationManager.gcda
+        -:    0:Runs:1
+        -:    1://====================================================
+        -:    2:// File: NavigationManager.cpp
+        -:    3://====================================================
+        -:    4:
+        -:    5:#include "navigation/include/NavigationManager.hpp"
+        -:    6:
+        -:    7:#include <cmath>
+        -:    8:#include <stdlib.h>
+        -:    9:
+        -:   10://====================================================
+        -:   11:// Constructor
+        -:   12://====================================================
+        -:   13:
+      144:   14:NavigationManager::NavigationManager(
+        -:   15:    const NavigationManagerConfig &config)
+       48:   16:    : m_config(config)
+       48:   17:{
+       96:   18:}
+        -:   19:
+        -:   20://====================================================
+        -:   21:// Main behavioral pipeline
+        -:   22://====================================================
+        -:   23:
+        -:   24:NavigationDecision
+      193:   25:NavigationManager::process(
+        -:   26:    const ObstacleAnalysis &obstacleAnalysis,
+        -:   27:    uint32_t currentTimestampMs)
+        -:   28:{
+      193:   29:    NavigationDecision decision;
+        -:   30:
+        -:   31:    //-----------------------------------------
+        -:   32:    // Timestamp
+        -:   33:    //-----------------------------------------
+        -:   34:
+      193:   35:    decision.timestampMs =
+      193:   36:        currentTimestampMs;
+        -:   37:
+        -:   38:    //-----------------------------------------
+        -:   39:    // Navigation confidence
+        -:   40:    //-----------------------------------------
+        -:   41:
+      193:   42:    decision.navigationConfidence =
+      193:   43:        determineNavigationConfidence(
+      193:   44:            obstacleAnalysis);
+        -:   45:
+        -:   46:    //-----------------------------------------
+        -:   47:    // NaN / Inf protection
+        -:   48:    //-----------------------------------------
+        -:   49:
+        -:   50:    if (
+      193:   51:        std::isnan(decision.navigationConfidence) ||
+      193:   52:        std::isinf(decision.navigationConfidence))
+        -:   53:    {
+    #####:   54:        decision.navigationConfidence = 0.0f;
+    #####:   55:    }
+        -:   56:
+        -:   57:    //-----------------------------------------
+        -:   58:    // Determine desired state
+        -:   59:    //-----------------------------------------
+        -:   60:
+      193:   61:    NavigationState targetState =
+      193:   62:        determineNavigationState(
+      193:   63:            obstacleAnalysis);
+        -:   64:
+        -:   65:    //-----------------------------------------
+        -:   66:    // Emergency override
+        -:   67:    //-----------------------------------------
+        -:   68:
+        -:   69:    if (
+      193:   70:        m_config.enableEmergencyOverride &&
+      193:   71:        shouldTriggerEmergency(
+      193:   72:            obstacleAnalysis))
+        -:   73:    {
+        8:   74:        targetState =
+        -:   75:            NavigationState::EmergencyStop;
+        -:   76:
+        8:   77:        decision.emergencyOverride = true;
+        8:   78:    }
+        -:   79:
+        -:   80:    //-----------------------------------------
+        -:   81:    // Blocked-state escalation
+        -:   82:    //-----------------------------------------
+        -:   83:
+        -:   84:    if (
+      193:   85:        shouldEnterBlockedState())
+        -:   86:    {
+        1:   87:        targetState =
+        -:   88:            NavigationState::Blocked;
+        1:   89:    }
+        -:   90:
+        -:   91:    //-----------------------------------------
+        -:   92:    // Transition validation
+        -:   93:    //-----------------------------------------
+        -:   94:
+        -:   95:    if (
+      193:   96:        !canTransitionToState(
+      193:   97:            targetState,
+      193:   98:            currentTimestampMs))
+        -:   99:    {
+       13:  100:        targetState =
+       13:  101:            m_memory.currentState;
+       13:  102:    }
+        -:  103:
+        -:  104:    //-----------------------------------------
+        -:  105:    // Final assigned state
+        -:  106:    //-----------------------------------------
+        -:  107:
+      193:  108:    decision.state =
+      193:  109:        targetState;
+        -:  110:
+        -:  111:    //-----------------------------------------
+        -:  112:    // Turn strategy
+        -:  113:    //-----------------------------------------
+        -:  114:
+      193:  115:    TurnDirection direction =
+        -:  116:        TurnDirection::None;
+        -:  117:
+        -:  118:    if (
+      193:  119:        targetState ==
+        -:  120:        NavigationState::Avoiding)
+        -:  121:    {
+        -:  122:        //-------------------------------------
+        -:  123:        // Deterministic alternating avoidance
+        -:  124:        //-------------------------------------
+        -:  125:
+        7:  126:        direction =
+        7:  127:            determineAlternatingDirection();
+        7:  128:    }
+        -:  129:    else if (
+      186:  130:        targetState ==
+        -:  131:        NavigationState::EscapeMode)
+        -:  132:    {
+        -:  133:        //-------------------------------------
+        -:  134:        // Randomized escape behavior
+        -:  135:        //-------------------------------------
+        -:  136:
+        3:  137:        direction =
+        3:  138:            determineRandomDirection();
+        3:  139:    }
+        -:  140:
+        -:  141:    //-----------------------------------------
+        -:  142:    // Movement action
+        -:  143:    //-----------------------------------------
+        -:  144:
+      193:  145:    decision.action =
+      193:  146:        determineAction(
+      193:  147:            targetState,
+      193:  148:            direction);
+        -:  149:
+        -:  150:    //-----------------------------------------
+        -:  151:    // Turn direction
+        -:  152:    //-----------------------------------------
+        -:  153:
+      193:  154:    decision.turnDirection =
+      193:  155:        direction;
+        -:  156:
+        -:  157:    //-----------------------------------------
+        -:  158:    // Movement profile
+        -:  159:    //-----------------------------------------
+        -:  160:
+      193:  161:    decision.movementProfile =
+      193:  162:        determineMovementProfile(
+      193:  163:            targetState);
+        -:  164:
+        -:  165:    //-----------------------------------------
+        -:  166:    // Speed recommendation
+        -:  167:    //-----------------------------------------
+        -:  168:
+      193:  169:    decision.targetSpeedPercent =
+      193:  170:        determineTargetSpeed(
+      193:  171:            targetState);
+        -:  172:
+        -:  173:    //-----------------------------------------
+        -:  174:    // Clamp speed
+        -:  175:    //-----------------------------------------
+        -:  176:
+      193:  177:    if (decision.targetSpeedPercent < 0.0f)
+        -:  178:    {
+    #####:  179:        decision.targetSpeedPercent = 0.0f;
+    #####:  180:    }
+        -:  181:
+      193:  182:    if (decision.targetSpeedPercent > 1.0f)
+        -:  183:    {
+    #####:  184:        decision.targetSpeedPercent = 1.0f;
+    #####:  185:    }
+        -:  186:
+        -:  187:    //-----------------------------------------
+        -:  188:    // Turn angle
+        -:  189:    //-----------------------------------------
+        -:  190:
+      193:  191:    decision.desiredTurnAngleDeg =
+      193:  192:        determineTurnAngle(
+      193:  193:            targetState,
+      193:  194:            direction);
+        -:  195:
+        -:  196:    //-----------------------------------------
+        -:  197:    // Escape behavior
+        -:  198:    //-----------------------------------------
+        -:  199:
+      193:  200:    decision.escapeBehaviorActive =
+      193:  201:        (targetState ==
+        -:  202:         NavigationState::EscapeMode);
+        -:  203:
+        -:  204:    //-----------------------------------------
+        -:  205:    // Avoidance behavior
+        -:  206:    //-----------------------------------------
+        -:  207:
+      193:  208:    decision.obstacleAvoidanceActive =
+      193:  209:        (targetState ==
+        -:  210:         NavigationState::Avoiding);
+        -:  211:
+        -:  212:    //-----------------------------------------
+        -:  213:    // Persistence
+        -:  214:    //-----------------------------------------
+        -:  215:
+      193:  216:    decision.persistentBehavior =
+      193:  217:        shouldPersistBehavior(
+      193:  218:            targetState,
+      193:  219:            currentTimestampMs);
+        -:  220:
+        -:  221:    //-----------------------------------------
+        -:  222:    // Update memory
+        -:  223:    //-----------------------------------------
+        -:  224:
+      193:  225:    updateNavigationMemory(
+        -:  226:        decision,
+      193:  227:        currentTimestampMs);
+        -:  228:
+      193:  229:    return decision;
+        -:  230:}
+        -:  231:
+        -:  232://====================================================
+        -:  233:// State determination
+        -:  234://====================================================
+        -:  235:
+        -:  236:NavigationState
+      193:  237:NavigationManager::determineNavigationState(
+        -:  238:    const ObstacleAnalysis &obstacleAnalysis) const
+        -:  239:{
+        -:  240:    //-----------------------------------------
+        -:  241:    // Unknown / degraded environment
+        -:  242:    //-----------------------------------------
+        -:  243:
+        -:  244:    if (
+      193:  245:        obstacleAnalysis.dangerLevel ==
+        -:  246:        DangerLevel::Unknown)
+        -:  247:    {
+        1:  248:        return NavigationState::CautiousForward;
+        -:  249:    }
+        -:  250:
+        -:  251:    //-----------------------------------------
+        -:  252:    // Emergency
+        -:  253:    //-----------------------------------------
+        -:  254:
+        -:  255:    if (
+      192:  256:        obstacleAnalysis.dangerLevel ==
+        -:  257:        DangerLevel::Emergency)
+        -:  258:    {
+        8:  259:        return NavigationState::EmergencyStop;
+        -:  260:    }
+        -:  261:
+        -:  262:    //-----------------------------------------
+        -:  263:    // Blocked environment
+        -:  264:    //-----------------------------------------
+        -:  265:
+        -:  266:    if (
+      184:  267:        obstacleAnalysis.dangerLevel ==
+        -:  268:        DangerLevel::Blocked)
+        -:  269:    {
+        -:  270:        //-------------------------------------
+        -:  271:        // Escalate into escape mode first
+        -:  272:        //-------------------------------------
+        -:  273:
+        4:  274:        return NavigationState::EscapeMode;
+        -:  275:    }
+        -:  276:
+        -:  277:    //-----------------------------------------
+        -:  278:    // Obstacle avoidance
+        -:  279:    //-----------------------------------------
+        -:  280:
+        -:  281:    if (
+      180:  282:        obstacleAnalysis.dangerLevel ==
+        -:  283:        DangerLevel::Avoid)
+        -:  284:    {
+        7:  285:        return NavigationState::Avoiding;
+        -:  286:    }
+        -:  287:
+        -:  288:    //-----------------------------------------
+        -:  289:    // Cautious navigation
+        -:  290:    //-----------------------------------------
+        -:  291:
+        -:  292:    if (
+      173:  293:        obstacleAnalysis.dangerLevel ==
+        -:  294:        DangerLevel::Caution)
+        -:  295:    {
+       10:  296:        return NavigationState::CautiousForward;
+        -:  297:    }
+        -:  298:
+        -:  299:    //-----------------------------------------
+        -:  300:    // Safe environment
+        -:  301:    //-----------------------------------------
+        -:  302:
+      163:  303:    return NavigationState::Forward;
+      193:  304:}
+        -:  305:
+        -:  306://====================================================
+        -:  307:// Transition validation
+        -:  308://====================================================
+        -:  309:
+      193:  310:bool NavigationManager::canTransitionToState(
+        -:  311:    NavigationState newState,
+        -:  312:    uint32_t currentTimestampMs) const
+        -:  313:{
+        -:  314:    //-----------------------------------------
+        -:  315:    // Same state
+        -:  316:    //-----------------------------------------
+        -:  317:
+        -:  318:    if (
+      386:  319:        newState ==
+      193:  320:        m_memory.currentState)
+        -:  321:    {
+      145:  322:        return true;
+        -:  323:    }
+        -:  324:
+        -:  325:    //-----------------------------------------
+        -:  326:    // Emergency override bypasses cooldown
+        -:  327:    //-----------------------------------------
+        -:  328:
+        -:  329:    if (
+       48:  330:        newState ==
+        -:  331:        NavigationState::EmergencyStop)
+        -:  332:    {
+        4:  333:        return true;
+        -:  334:    }
+        -:  335:
+        -:  336:    //-----------------------------------------
+        -:  337:    // Cooldown protection
+        -:  338:    //-----------------------------------------
+        -:  339:
+        -:  340:    if (
+       88:  341:        currentTimestampMs <
+       44:  342:        m_memory.cooldownUntilTimestampMs)
+        -:  343:    {
+        1:  344:        return false;
+        -:  345:    }
+        -:  346:
+        -:  347:    //-----------------------------------------
+        -:  348:    // Minimum state persistence
+        -:  349:    //-----------------------------------------
+        -:  350:
+       43:  351:    const uint32_t elapsedMs =
+       86:  352:        currentTimestampMs -
+       43:  353:        m_memory.stateEntryTimestampMs;
+        -:  354:
+       43:  355:    return (
+       86:  356:        elapsedMs >=
+       43:  357:        m_config.minimumStateDurationMs);
+      193:  358:}
+        -:  359:
+        -:  360://====================================================
+        -:  361:// Emergency detection
+        -:  362://====================================================
+        -:  363:
+      193:  364:bool NavigationManager::shouldTriggerEmergency(
+        -:  365:    const ObstacleAnalysis &obstacleAnalysis) const
+        -:  366:{
+      193:  367:    return (
+      193:  368:        obstacleAnalysis.emergencyDetected ||
+      185:  369:        obstacleAnalysis.dangerLevel ==
+        -:  370:            DangerLevel::Emergency);
+        -:  371:}
+        -:  372:
+        -:  373://====================================================
+        -:  374:// Blocked-state escalation
+        -:  375://====================================================
+        -:  376:
+      193:  377:bool NavigationManager::shouldEnterBlockedState() const
+        -:  378:{
+      193:  379:    return (
+      386:  380:        m_memory.consecutiveEscapeAttempts >=
+      193:  381:        m_config.blockedStateThreshold);
+        -:  382:}
+        -:  383:
+        -:  384://====================================================
+        -:  385:// Alternating direction
+        -:  386://====================================================
+        -:  387:
+        -:  388:TurnDirection
+        7:  389:NavigationManager::determineAlternatingDirection()
+        -:  390:{
+        -:  391:    if (
+        7:  392:        m_memory.lastTurnDirection ==
+        -:  393:        TurnDirection::Left)
+        -:  394:    {
+        5:  395:        return TurnDirection::Right;
+        -:  396:    }
+        -:  397:
+        2:  398:    return TurnDirection::Left;
+        7:  399:}
+        -:  400:
+        -:  401://====================================================
+        -:  402:// Random direction
+        -:  403://====================================================
+        -:  404:
+        -:  405:TurnDirection
+        3:  406:NavigationManager::determineRandomDirection()
+        -:  407:{
+        3:  408:    return (
+        3:  409:               rand() % 2 == 0)
+        -:  410:               ? TurnDirection::Left
+        -:  411:               : TurnDirection::Right;
+        -:  412:}
+        -:  413:
+        -:  414://====================================================
+        -:  415:// Action generation
+        -:  416://====================================================
+        -:  417:
+        -:  418:NavigationAction
+      193:  419:NavigationManager::determineAction(
+        -:  420:    NavigationState state,
+        -:  421:    TurnDirection direction) const
+        -:  422:{
+      193:  423:    switch (state)
+        -:  424:    {
+        -:  425:    case NavigationState::Forward:
+        -:  426:    case NavigationState::CautiousForward:
+        -:  427:
+      163:  428:        return NavigationAction::MoveForward;
+        -:  429:
+        -:  430:    case NavigationState::Avoiding:
+        -:  431:
+        7:  432:        return (
+        7:  433:                   direction ==
+        -:  434:                   TurnDirection::Left)
+        -:  435:                   ? NavigationAction::CurveLeft
+        -:  436:                   : NavigationAction::CurveRight;
+        -:  437:
+        -:  438:    case NavigationState::EscapeMode:
+        -:  439:
+        3:  440:        return NavigationAction::MoveBackward;
+        -:  441:
+        -:  442:    case NavigationState::EmergencyStop:
+        -:  443:    case NavigationState::Blocked:
+        -:  444:
+        9:  445:        return NavigationAction::Stop;
+        -:  446:
+        -:  447:    default:
+        -:  448:
+       11:  449:        return NavigationAction::Stop;
+        -:  450:    }
+      193:  451:}
+        -:  452:
+        -:  453://====================================================
+        -:  454:// Movement profile
+        -:  455://====================================================
+        -:  456:
+        -:  457:MovementProfile
+      193:  458:NavigationManager::determineMovementProfile(
+        -:  459:    NavigationState state) const
+        -:  460:{
+      193:  461:    switch (state)
+        -:  462:    {
+        -:  463:    case NavigationState::Forward:
+        -:  464:
+      152:  465:        return MovementProfile::Normal;
+        -:  466:
+        -:  467:    case NavigationState::CautiousForward:
+        -:  468:
+       11:  469:        return MovementProfile::Cautious;
+        -:  470:
+        -:  471:    case NavigationState::Avoiding:
+        -:  472:
+        7:  473:        return MovementProfile::Cautious;
+        -:  474:
+        -:  475:    case NavigationState::EscapeMode:
+        -:  476:
+        3:  477:        return MovementProfile::Escape;
+        -:  478:
+        -:  479:    case NavigationState::EmergencyStop:
+        -:  480:
+        8:  481:        return MovementProfile::Emergency;
+        -:  482:
+        -:  483:    default:
+        -:  484:
+       12:  485:        return MovementProfile::Normal;
+        -:  486:    }
+      193:  487:}
+        -:  488:
+        -:  489://====================================================
+        -:  490:// Speed recommendation
+        -:  491://====================================================
+        -:  492:
+      193:  493:float NavigationManager::determineTargetSpeed(
+        -:  494:    NavigationState state) const
+        -:  495:{
+      193:  496:    switch (state)
+        -:  497:    {
+        -:  498:    case NavigationState::Forward:
+        -:  499:
+      152:  500:        return m_config.normalSpeedPercent;
+        -:  501:
+        -:  502:    case NavigationState::CautiousForward:
+        -:  503:
+       11:  504:        return m_config.cautiousSpeedPercent;
+        -:  505:
+        -:  506:    case NavigationState::Avoiding:
+        -:  507:
+        7:  508:        return m_config.cautiousSpeedPercent;
+        -:  509:
+        -:  510:    case NavigationState::EscapeMode:
+        -:  511:
+        3:  512:        return m_config.escapeSpeedPercent;
+        -:  513:
+        -:  514:    case NavigationState::EmergencyStop:
+        -:  515:    case NavigationState::Blocked:
+        -:  516:
+        9:  517:        return 0.0f;
+        -:  518:
+        -:  519:    default:
+        -:  520:
+       11:  521:        return 0.0f;
+        -:  522:    }
+      193:  523:}
+        -:  524:
+        -:  525://====================================================
+        -:  526:// Turn angle generation
+        -:  527://====================================================
+        -:  528:
+      193:  529:float NavigationManager::determineTurnAngle(
+        -:  530:    NavigationState state,
+        -:  531:    TurnDirection direction) const
+        -:  532:{
+        -:  533:    //-----------------------------------------
+        -:  534:    // Cautious forward should remain straight
+        -:  535:    //-----------------------------------------
+        -:  536:
+        -:  537:    if (
+      193:  538:        state ==
+        -:  539:        NavigationState::CautiousForward)
+        -:  540:    {
+       11:  541:        return 0.0f;
+        -:  542:    }
+        -:  543:
+      182:  544:    float angle = 0.0f;
+        -:  545:
+      182:  546:    switch (state)
+        -:  547:    {
+        -:  548:    case NavigationState::Avoiding:
+        -:  549:
+        7:  550:        angle =
+        7:  551:            m_config.avoidanceTurnAngleDeg;
+        -:  552:
+        7:  553:        break;
+        -:  554:
+        -:  555:    case NavigationState::EscapeMode:
+        -:  556:
+        3:  557:        angle =
+        3:  558:            m_config.escapeTurnAngleDeg;
+        -:  559:
+        3:  560:        break;
+        -:  561:
+        -:  562:    default:
+        -:  563:
+      172:  564:        return 0.0f;
+        -:  565:    }
+        -:  566:
+        -:  567:    //-----------------------------------------
+        -:  568:    // Left negative
+        -:  569:    // Right positive
+        -:  570:    //-----------------------------------------
+        -:  571:
+       10:  572:    return (
+       10:  573:               direction ==
+        -:  574:               TurnDirection::Left)
+        2:  575:               ? -angle
+        8:  576:               : angle;
+      193:  577:}
+        -:  578:
+        -:  579://====================================================
+        -:  580:// Navigation confidence
+        -:  581://====================================================
+        -:  582:
+      193:  583:float NavigationManager::determineNavigationConfidence(
+        -:  584:    const ObstacleAnalysis &obstacleAnalysis) const
+        -:  585:{
+      193:  586:    float confidence =
+      193:  587:        obstacleAnalysis.confidence;
+        -:  588:
+        -:  589:    //-----------------------------------------
+        -:  590:    // Clamp
+        -:  591:    //-----------------------------------------
+        -:  592:
+      193:  593:    if (confidence < 0.0f)
+        -:  594:    {
+    #####:  595:        confidence = 0.0f;
+    #####:  596:    }
+        -:  597:
+      193:  598:    if (confidence > 1.0f)
+        -:  599:    {
+    #####:  600:        confidence = 1.0f;
+    #####:  601:    }
+        -:  602:
+        -:  603:    //-----------------------------------------
+        -:  604:    // Confidence adaptation
+        -:  605:    //-----------------------------------------
+        -:  606:
+        -:  607:    if (
+      193:  608:        m_config.enableConfidenceAdaptation &&
+      386:  609:        confidence <
+      193:  610:            m_config.lowConfidenceThreshold)
+        -:  611:    {
+       26:  612:        confidence *= 0.7f;
+       26:  613:    }
+        -:  614:
+      193:  615:    return confidence;
+        -:  616:}
+        -:  617:
+        -:  618://====================================================
+        -:  619:// Persistent behavior
+        -:  620://====================================================
+        -:  621:
+      193:  622:bool NavigationManager::shouldPersistBehavior(
+        -:  623:    NavigationState state,
+        -:  624:    uint32_t currentTimestampMs) const
+        -:  625:{
+      193:  626:    if (!m_config.enableBehaviorPersistence)
+        -:  627:    {
+        1:  628:        return false;
+        -:  629:    }
+        -:  630:
+      192:  631:    switch (state)
+        -:  632:    {
+        -:  633:    case NavigationState::Avoiding:
+        -:  634:    case NavigationState::EscapeMode:
+        -:  635:    case NavigationState::EmergencyStop:
+        -:  636:    case NavigationState::Blocked:
+        -:  637:
+       18:  638:        return true;
+        -:  639:
+        -:  640:    default:
+        -:  641:
+      174:  642:        return false;
+        -:  643:    }
+      193:  644:}
+        -:  645:
+        -:  646://====================================================
+        -:  647:// Memory update
+        -:  648://====================================================
+        -:  649:
+      193:  650:void NavigationManager::updateNavigationMemory(
+        -:  651:    const NavigationDecision &decision,
+        -:  652:    uint32_t currentTimestampMs)
+        -:  653:{
+        -:  654:    //-----------------------------------------
+        -:  655:    // State transition
+        -:  656:    //-----------------------------------------
+        -:  657:
+        -:  658:    if (
+      386:  659:        decision.state !=
+      193:  660:        m_memory.currentState)
+        -:  661:    {
+       35:  662:        m_memory.previousState =
+       35:  663:            m_memory.currentState;
+        -:  664:
+       35:  665:        m_memory.currentState =
+       35:  666:            decision.state;
+        -:  667:
+       35:  668:        m_memory.lastStateChangeTimestampMs =
+       35:  669:            currentTimestampMs;
+        -:  670:
+       35:  671:        m_memory.stateEntryTimestampMs =
+       35:  672:            currentTimestampMs;
+        -:  673:
+        -:  674:        //-------------------------------------
+        -:  675:        // Apply cooldown only for avoidance
+        -:  676:        //-------------------------------------
+        -:  677:
+        -:  678:        if (
+       35:  679:            decision.state ==
+        -:  680:            NavigationState::Avoiding)
+        -:  681:        {
+        5:  682:            m_memory.cooldownUntilTimestampMs =
+       10:  683:                currentTimestampMs +
+        5:  684:                m_config.avoidanceCooldownMs;
+        5:  685:        }
+        -:  686:
+       35:  687:        m_memory.stableFrameCount = 0;
+       35:  688:    }
+        -:  689:    else
+        -:  690:    {
+        -:  691:        //-------------------------------------
+        -:  692:        // Stable state tracking
+        -:  693:        //-------------------------------------
+        -:  694:
+        -:  695:        if (
+      158:  696:            m_memory.stableFrameCount <
+        -:  697:            UINT32_MAX)
+        -:  698:        {
+      158:  699:            m_memory.stableFrameCount++;
+      158:  700:        }
+        -:  701:    }
+        -:  702:
+        -:  703:    //-----------------------------------------
+        -:  704:    // Stable persistent state
+        -:  705:    //-----------------------------------------
+        -:  706:
+        -:  707:    if (
+      386:  708:        m_memory.stableFrameCount >=
+      193:  709:        m_config.minimumStableFrames)
+        -:  710:    {
+      124:  711:        m_memory.stableState =
+      124:  712:            decision.state;
+      124:  713:    }
+        -:  714:
+        -:  715:    //-----------------------------------------
+        -:  716:    // Turn memory
+        -:  717:    //-----------------------------------------
+        -:  718:
+        -:  719:    if (
+      193:  720:        decision.turnDirection !=
+        -:  721:        TurnDirection::None)
+        -:  722:    {
+       10:  723:        m_memory.lastTurnDirection =
+       10:  724:            decision.turnDirection;
+       10:  725:    }
+        -:  726:
+        -:  727:    //-----------------------------------------
+        -:  728:    // Escape tracking
+        -:  729:    //-----------------------------------------
+        -:  730:
+        -:  731:    if (
+      193:  732:        decision.state ==
+        -:  733:        NavigationState::EscapeMode)
+        -:  734:    {
+        -:  735:        if (
+        3:  736:            m_memory.consecutiveEscapeAttempts <
+        -:  737:            UINT32_MAX)
+        -:  738:        {
+        3:  739:            m_memory.consecutiveEscapeAttempts++;
+        3:  740:        }
+        3:  741:    }
+        -:  742:    else
+        -:  743:    {
+      190:  744:        m_memory.consecutiveEscapeAttempts = 0;
+        -:  745:    }
+        -:  746:
+        -:  747:    //-----------------------------------------
+        -:  748:    // Persistent behavior
+        -:  749:    //-----------------------------------------
+        -:  750:
+      193:  751:    m_memory.persistentBehaviorActive =
+      193:  752:        decision.persistentBehavior;
+      193:  753:}

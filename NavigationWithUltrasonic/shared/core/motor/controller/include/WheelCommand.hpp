@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include "../driver/MotorDriverTypes.hpp"
+#include "interfaces/include/motor/driver/MotorDriverTypes.hpp"
 
 #include <stdint.h>
 

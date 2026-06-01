@@ -1,0 +1,53 @@
+        -:    0:Source:lib/shared/core/robot/include/PipelineTiming.hpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcda
+        -:    0:Runs:1
+        -:    1://====================================================
+        -:    2:// File: PipelineTiming.hpp
+        -:    3://====================================================
+        -:    4:
+        -:    5:#pragma once
+        -:    6:
+        -:    7:#include <stdint.h>
+        -:    8:
+        -:    9://====================================================
+        -:   10:// PipelineTiming
+        -:   11://====================================================
+        -:   12://
+        -:   13:// Real-time robotics pipeline timing.
+        -:   14://
+        -:   15:// Critical for:
+        -:   16://      deterministic execution
+        -:   17://      latency tracking
+        -:   18://      jitter monitoring
+        -:   19://      runtime stability
+        -:   20://
+        -:   21://====================================================
+        -:   22:
+       36:   23:struct PipelineTiming
+        -:   24:{
+        -:   25:    // Total control loop duration
+       36:   26:    uint32_t controlLoopDurationUs = 0;
+        -:   27:    // Sensor stage duration
+       36:   28:    uint32_t sensorStageDurationUs = 0;
+        -:   29:    // Filter stage duration
+       36:   30:    uint32_t filterStageDurationUs = 0;
+        -:   31:    // Obstacle stage duration
+       36:   32:    uint32_t obstacleStageDurationUs = 0;
+        -:   33:    // Navigation stage duration
+       36:   34:    uint32_t navigationStageDurationUs = 0;
+        -:   35:    // Motion stage duration
+       36:   36:    uint32_t motionStageDurationUs = 0;
+        -:   37:    // Motor stage duration
+       36:   38:    uint32_t motorStageDurationUs = 0;
+        -:   39:    // Worst-case loop duration
+       36:   40:    uint32_t worstCaseLoopDurationUs = 0;
+        -:   41:    // Average loop duration
+       36:   42:    uint32_t averageLoopDurationUs = 0;
+        -:   43:    // Pipeline jitter
+       36:   44:    uint32_t pipelineJitterUs = 0;
+        -:   45:    // Missed control cycles
+       36:   46:    uint32_t missedControlCycles = 0;
+        -:   47:    // Last update timestamp
+       36:   48:    uint32_t lastUpdateTimestampMs = 0;
+        -:   49:};

@@ -1,0 +1,35 @@
+        -:    0:Source:lib/shared/core/obstacle/include/ObstacleAnalysis.hpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcda
+        -:    0:Runs:1
+        -:    1:#pragma once
+        -:    2:
+        -:    3:#include <stdint.h>
+        -:    4:#include "DangerLevel.hpp"
+        -:    5:
+    #####:    6:struct ObstacleAnalysis
+        -:    7:{
+        -:    8:    // Obstacle state
+    #####:    9:    bool obstacleDetected = false;
+    #####:   10:    bool obstacleRemembered = false;
+    #####:   11:    bool emergencyDetected = false;
+        -:   12:
+        -:   13:    // Environment classification
+    #####:   14:    DangerLevel dangerLevel = DangerLevel::Safe;
+        -:   15:    // Obstacle properties
+    #####:   16:    float obstacleDistanceCm = 0.0f;
+    #####:   17:    float obstacleVelocityCmPerSec = 0.0f;
+        -:   18:
+    #####:   19:    float confidence = 0.0f;
+        -:   20:
+        -:   21:    // Stability / reliability
+    #####:   22:    bool isStable = false;
+        -:   23:
+        -:   24:    // Sensor health monitoring: Sensor health / reliability
+    #####:   25:    bool sensorHealthy = true;
+    #####:   26:    bool timeoutOccurred = false;
+    #####:   27:    uint32_t consecutiveTimeouts = 0;
+        -:   28:
+        -:   29:    // Temporal information
+    #####:   30:    uint32_t timestampMs = 0;
+        -:   31:};

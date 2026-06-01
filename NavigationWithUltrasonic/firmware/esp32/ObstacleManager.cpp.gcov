@@ -1,0 +1,496 @@
+        -:    0:Source:lib/shared/core/obstacle/src/ObstacleManager.cpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-ObstacleManager.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-ObstacleManager.gcda
+        -:    0:Runs:1
+        -:    1://====================================================
+        -:    2:// File: ObstacleManager.cpp
+        -:    3://====================================================
+        -:    4:
+        -:    5:#include "obstacle/include/ObstacleManager.hpp"
+        -:    6:
+        -:    7:#include <cmath>
+        -:    8:
+        -:    9:uint32_t blockedDetectionFrames = 20;
+        -:   10:
+        -:   11:namespace
+        -:   12:{
+       48:   13:    int dangerSeverity(
+        -:   14:        DangerLevel level)
+        -:   15:    {
+       48:   16:        switch (level)
+        -:   17:        {
+        -:   18:        case DangerLevel::Safe:
+        4:   19:            return 0;
+        -:   20:
+        -:   21:        case DangerLevel::Caution:
+       20:   22:            return 1;
+        -:   23:
+        -:   24:        case DangerLevel::Avoid:
+        5:   25:            return 2;
+        -:   26:
+        -:   27:        case DangerLevel::Emergency:
+       13:   28:            return 3;
+        -:   29:
+        -:   30:        case DangerLevel::Blocked:
+    #####:   31:            return 4;
+        -:   32:
+        6:   33:        case DangerLevel::Unknown:
+        -:   34:        default:
+        6:   35:            return -1;
+        -:   36:        }
+       48:   37:    }
+        -:   38:}
+        -:   39:
+        -:   40://====================================================
+        -:   41:// Constructor
+        -:   42://====================================================
+        -:   43:
+      132:   44:ObstacleManager::ObstacleManager(
+        -:   45:    const ObstacleManagerConfig &config)
+       44:   46:    : m_config(config)
+       44:   47:{
+       88:   48:}
+        -:   49:
+        -:   50://====================================================
+        -:   51:// Main processing pipeline
+        -:   52://====================================================
+        -:   53:
+        -:   54:ObstacleAnalysis
+      164:   55:ObstacleManager::process(
+        -:   56:    const FilteredSensorData &sensorData,
+        -:   57:    uint32_t currentTimestampMs)
+        -:   58:{
+      164:   59:    ObstacleAnalysis analysis;
+        -:   60:
+        -:   61:    //-----------------------------------------
+        -:   62:    // Timestamp
+        -:   63:    //-----------------------------------------
+        -:   64:
+      164:   65:    analysis.timestampMs =
+      164:   66:        currentTimestampMs;
+        -:   67:
+        -:   68:    //-----------------------------------------
+        -:   69:    // Sensor health
+        -:   70:    //-----------------------------------------
+        -:   71:
+      164:   72:    analysis.sensorHealthy =
+      164:   73:        isSensorHealthy(sensorData);
+        -:   74:
+        -:   75:    //-----------------------------------------
+        -:   76:    // Copy perception data
+        -:   77:    //-----------------------------------------
+        -:   78:
+      164:   79:    analysis.obstacleDistanceCm =
+      164:   80:        sensorData.filteredDistanceCm;
+        -:   81:
+      164:   82:    analysis.obstacleVelocityCmPerSec =
+      164:   83:        sensorData.velocityCmPerSec;
+        -:   84:
+      164:   85:    analysis.confidence =
+      164:   86:        sensorData.confidence;
+        -:   87:
+      164:   88:    analysis.isStable =
+      164:   89:        sensorData.isStable;
+        -:   90:
+      164:   91:    analysis.timeoutOccurred =
+      164:   92:        sensorData.timeoutOccurred;
+        -:   93:
+      164:   94:    analysis.consecutiveTimeouts =
+      164:   95:        sensorData.consecutiveTimeouts;
+        -:   96:
+        -:   97:    //-----------------------------------------
+        -:   98:    // Obstacle validation
+        -:   99:    //-----------------------------------------
+        -:  100:
+      164:  101:    analysis.obstacleDetected =
+      164:  102:        isObstacleValid(sensorData);
+        -:  103:
+        -:  104:    //-----------------------------------------
+        -:  105:    // Unknown environment
+        -:  106:    //-----------------------------------------
+      164:  107:    if (!analysis.sensorHealthy)
+        -:  108:    {
+        1:  109:        analysis.dangerLevel =
+        -:  110:            DangerLevel::Unknown;
+        -:  111:
+        -:  112:        // Solve: Obstacle exists BUT environment unknown
+        1:  113:        analysis.obstacleDetected = false;
+        1:  114:    }
+        -:  115:    else
+        -:  116:    {
+        -:  117:        // Danger classification
+      163:  118:        if (analysis.obstacleDetected)
+        -:  119:        {
+       24:  120:            DangerLevel newLevel =
+       24:  121:                determineDangerLevel(sensorData);
+        -:  122:
+       24:  123:            analysis.dangerLevel =
+       24:  124:                applyHysteresis(
+       24:  125:                    newLevel,
+       24:  126:                    sensorData.filteredDistanceCm);
+       24:  127:        }
+        -:  128:        else
+        -:  129:        {
+      139:  130:            analysis.dangerLevel =
+        -:  131:                DangerLevel::Safe;
+        -:  132:        }
+        -:  133:    }
+        -:  134:
+        -:  135:    // Emergency detection
+      164:  136:    analysis.emergencyDetected =
+      164:  137:        (analysis.dangerLevel ==
+        -:  138:         DangerLevel::Emergency);
+        -:  139:
+        -:  140:    //-----------------------------------------
+        -:  141:    // Temporal obstacle memory
+        -:  142:    //-----------------------------------------
+        -:  143:
+      164:  144:    updateObstacleMemory(
+        -:  145:        analysis,
+      164:  146:        currentTimestampMs);
+        -:  147:
+        -:  148:    //-----------------------------------------
+        -:  149:    // Obstacle persistence
+        -:  150:    //-----------------------------------------
+        -:  151:
+      164:  152:    analysis.obstacleRemembered =
+      164:  153:        shouldRememberObstacle(
+      164:  154:            currentTimestampMs);
+        -:  155:
+        -:  156:    //-----------------------------------------
+        -:  157:    // Blocked path detection
+        -:  158:    //-----------------------------------------
+        -:  159:
+        -:  160:    if (
+      164:  161:        analysis.dangerLevel ==
+      164:  162:            DangerLevel::Emergency &&
+        9:  163:        m_memory.consecutiveDetectionFrames >= blockedDetectionFrames)
+        -:  164:    {
+    #####:  165:        analysis.dangerLevel =
+        -:  166:            DangerLevel::Blocked;
+    #####:  167:    }
+        -:  168:
+        -:  169:    //-----------------------------------------
+        -:  170:    // Save current danger state
+        -:  171:    //-----------------------------------------
+        -:  172:
+      164:  173:    m_currentDangerLevel =
+      164:  174:        analysis.dangerLevel;
+        -:  175:
+      164:  176:    return analysis;
+        -:  177:}
+        -:  178:
+        -:  179://====================================================
+        -:  180:// Danger classification
+        -:  181://====================================================
+        -:  182:
+        -:  183:DangerLevel
+       24:  184:ObstacleManager::determineDangerLevel(
+        -:  185:    const FilteredSensorData &sensorData) const
+        -:  186:{
+       24:  187:    const float distance =
+       24:  188:        sensorData.filteredDistanceCm;
+        -:  189:
+        -:  190:    //-----------------------------------------
+        -:  191:    // Emergency escalation
+        -:  192:    //-----------------------------------------
+        -:  193:
+        -:  194:    if (
+       24:  195:        m_config.enableEmergencyOverride &&
+       30:  196:        sensorData.velocityCmPerSec <
+       15:  197:            m_config.emergencyVelocityThresholdCmPerSec)
+        -:  198:    {
+        6:  199:        return DangerLevel::Emergency;
+        -:  200:    }
+        -:  201:
+        -:  202:    //-----------------------------------------
+        -:  203:    // Distance-based classification
+        -:  204:    //-----------------------------------------
+        -:  205:
+        -:  206:    if (
+       36:  207:        distance <=
+       18:  208:        m_config.emergencyDistanceCm)
+        -:  209:    {
+        3:  210:        return DangerLevel::Emergency;
+        -:  211:    }
+        -:  212:
+        -:  213:    if (
+       30:  214:        distance <=
+       15:  215:        m_config.avoidDistanceCm)
+        -:  216:    {
+        4:  217:        return DangerLevel::Avoid;
+        -:  218:    }
+        -:  219:
+        -:  220:    if (
+       22:  221:        distance <=
+       11:  222:        m_config.cautionDistanceCm)
+        -:  223:    {
+       11:  224:        return DangerLevel::Caution;
+        -:  225:    }
+        -:  226:
+    #####:  227:    return DangerLevel::Safe;
+       24:  228:}
+        -:  229:
+        -:  230://====================================================
+        -:  231:// Hysteresis
+        -:  232://====================================================
+        -:  233:
+        -:  234:DangerLevel
+       24:  235:ObstacleManager::applyHysteresis(
+        -:  236:    DangerLevel newLevel,
+        -:  237:    float distanceCm) const
+        -:  238:{
+        -:  239:    if (
+       48:  240:        dangerSeverity(newLevel) >
+       24:  241:        dangerSeverity(m_currentDangerLevel))
+        -:  242:    {
+       13:  243:        return newLevel;
+        -:  244:    }
+        -:  245:
+       11:  246:    switch (m_currentDangerLevel)
+        -:  247:    {
+        -:  248:        //-----------------------------------------
+        -:  249:        // Emergency persistence
+        -:  250:        //-----------------------------------------
+        -:  251:
+        -:  252:    case DangerLevel::Emergency:
+        -:  253:
+        -:  254:        if (
+        8:  255:            distanceCm <=
+        8:  256:            (m_config.emergencyDistanceCm +
+        4:  257:             m_config.hysteresisCm))
+        -:  258:        {
+        3:  259:            return DangerLevel::Emergency;
+        -:  260:        }
+        -:  261:
+        1:  262:        break;
+        -:  263:
+        -:  264:        //-----------------------------------------
+        -:  265:        // Avoid persistence
+        -:  266:        //-----------------------------------------
+        -:  267:
+        -:  268:    case DangerLevel::Avoid:
+        -:  269:
+        -:  270:        if (
+        2:  271:            distanceCm <=
+        2:  272:            (m_config.avoidDistanceCm +
+        1:  273:             m_config.hysteresisCm))
+        -:  274:        {
+        1:  275:            return DangerLevel::Avoid;
+        -:  276:        }
+        -:  277:
+    #####:  278:        break;
+        -:  279:
+        -:  280:        //-----------------------------------------
+        -:  281:        // Caution persistence
+        -:  282:        //-----------------------------------------
+        -:  283:
+        -:  284:    case DangerLevel::Caution:
+        -:  285:
+        -:  286:        if (
+       12:  287:            distanceCm <=
+       12:  288:            (m_config.cautionDistanceCm +
+        6:  289:             m_config.hysteresisCm))
+        -:  290:        {
+        6:  291:            return DangerLevel::Caution;
+        -:  292:        }
+        -:  293:
+    #####:  294:        break;
+        -:  295:
+        -:  296:    default:
+    #####:  297:        break;
+        -:  298:    }
+        -:  299:
+        1:  300:    return newLevel;
+       24:  301:}
+        -:  302:
+        -:  303://====================================================
+        -:  304:// Obstacle validation
+        -:  305://====================================================
+        -:  306:
+      164:  307:bool ObstacleManager::isObstacleValid(
+        -:  308:    const FilteredSensorData &sensorData) const
+        -:  309:{
+        -:  310:    //-----------------------------------------
+        -:  311:    // Confidence gating
+        -:  312:    //-----------------------------------------
+        -:  313:
+        -:  314:    if (
+      164:  315:        m_config.enableConfidenceGating &&
+       46:  316:        sensorData.confidence <
+       23:  317:            m_config.minimumConfidence)
+        -:  318:    {
+       12:  319:        return false;
+        -:  320:    }
+        -:  321:
+        -:  322:    //-----------------------------------------
+        -:  323:    // Stability validation
+        -:  324:    //-----------------------------------------
+        -:  325:
+        -:  326:    if (
+      152:  327:        m_config.enableStabilityValidation &&
+       11:  328:        !sensorData.isStable)
+        -:  329:    {
+        1:  330:        return false;
+        -:  331:    }
+        -:  332:
+        -:  333:    //-----------------------------------------
+        -:  334:    // Sensor health
+        -:  335:    //-----------------------------------------
+        -:  336:
+      151:  337:    if (!isSensorHealthy(sensorData))
+        -:  338:    {
+        1:  339:        return false;
+        -:  340:    }
+        -:  341:
+        -:  342:    //-----------------------------------------
+        -:  343:    // Valid obstacle range
+        -:  344:    //-----------------------------------------
+        -:  345:
+      150:  346:    return (
+      300:  347:        sensorData.filteredDistanceCm <=
+      150:  348:        m_config.cautionDistanceCm);
+      164:  349:}
+        -:  350:
+        -:  351://====================================================
+        -:  352:// Sensor health interpretation
+        -:  353://====================================================
+        -:  354:
+      315:  355:bool ObstacleManager::isSensorHealthy(
+        -:  356:    const FilteredSensorData &sensorData) const
+        -:  357:{
+      315:  358:    return (
+      630:  359:        sensorData.consecutiveTimeouts <
+      315:  360:        m_config.maxTimeoutTolerance);
+        -:  361:}
+        -:  362:
+        -:  363://====================================================
+        -:  364:// Temporal obstacle memory
+        -:  365://====================================================
+        -:  366:
+      164:  367:void ObstacleManager::updateObstacleMemory(
+        -:  368:    const ObstacleAnalysis &analysis,
+        -:  369:    uint32_t currentTimestampMs)
+        -:  370:{
+        -:  371:    //-----------------------------------------
+        -:  372:    // Obstacle detected
+        -:  373:    //-----------------------------------------
+        -:  374:
+      164:  375:    if (analysis.obstacleDetected)
+        -:  376:    {
+        -:  377:        //-----------------------------------------
+        -:  378:        // Activate obstacle memory
+        -:  379:        //-----------------------------------------
+        -:  380:
+       24:  381:        m_memory.obstacleActive = true;
+        -:  382:
+       24:  383:        m_memory.obstacleRemembered = true;
+        -:  384:
+        -:  385:        //-----------------------------------------
+        -:  386:        // Timing
+        -:  387:        //-----------------------------------------
+        -:  388:
+       24:  389:        if (m_memory.firstDetectedTimestampMs == 0)
+        -:  390:        {
+       10:  391:            m_memory.firstDetectedTimestampMs =
+       10:  392:                currentTimestampMs;
+       10:  393:        }
+        -:  394:
+       24:  395:        m_memory.lastSeenTimestampMs =
+       24:  396:            currentTimestampMs;
+        -:  397:
+        -:  398:        //-----------------------------------------
+        -:  399:        // Last known state
+        -:  400:        //-----------------------------------------
+        -:  401:
+       24:  402:        m_memory.lastDangerLevel =
+       24:  403:            analysis.dangerLevel;
+        -:  404:
+       24:  405:        m_memory.lastKnownDistanceCm =
+       24:  406:            analysis.obstacleDistanceCm;
+        -:  407:
+       24:  408:        m_memory.lastKnownVelocityCmPerSec =
+       24:  409:            analysis.obstacleVelocityCmPerSec;
+        -:  410:
+       24:  411:        m_memory.lastKnownConfidence =
+       24:  412:            analysis.confidence;
+        -:  413:
+        -:  414:        //-----------------------------------------
+        -:  415:        // Detection counters
+        -:  416:        //-----------------------------------------
+        -:  417:
+        -:  418:        if (
+       24:  419:            m_memory.consecutiveDetectionFrames <
+        -:  420:            UINT32_MAX)
+        -:  421:        {
+       24:  422:            m_memory.consecutiveDetectionFrames++;
+       24:  423:        }
+        -:  424:
+       24:  425:        m_memory.consecutiveLostFrames = 0;
+        -:  426:
+        -:  427:        //-----------------------------------------
+        -:  428:        // Stability
+        -:  429:        //-----------------------------------------
+        -:  430:
+       24:  431:        m_memory.obstacleStable =
+       48:  432:            (m_memory.consecutiveDetectionFrames >=
+       24:  433:             m_config.minimumDetectionFrames);
+       24:  434:    }
+        -:  435:    else
+        -:  436:    {
+        -:  437:        //-----------------------------------------
+        -:  438:        // Lost obstacle
+        -:  439:        //-----------------------------------------
+        -:  440:
+        -:  441:        if (
+      140:  442:            m_memory.consecutiveLostFrames <
+        -:  443:            UINT32_MAX)
+        -:  444:        {
+      140:  445:            m_memory.consecutiveLostFrames++;
+      140:  446:        }
+        -:  447:
+        -:  448:        //-----------------------------------------
+        -:  449:        // Clear persistent state
+        -:  450:        //-----------------------------------------
+        -:  451:
+        -:  452:        if (
+      280:  453:            m_memory.consecutiveLostFrames >
+      140:  454:            m_config.maximumLostFrames)
+        -:  455:        {
+      105:  456:            m_memory.obstacleActive = false;
+        -:  457:
+      105:  458:            m_memory.obstacleStable = false;
+        -:  459:
+      105:  460:            m_memory.consecutiveDetectionFrames = 0;
+      105:  461:        }
+        -:  462:    }
+        -:  463:
+        -:  464:    //-----------------------------------------
+        -:  465:    // Sensor health snapshot
+        -:  466:    //-----------------------------------------
+        -:  467:
+      164:  468:    m_memory.sensorHealthy =
+      164:  469:        analysis.sensorHealthy;
+      164:  470:}
+        -:  471:
+        -:  472://====================================================
+        -:  473:// Obstacle persistence
+        -:  474://====================================================
+        -:  475:
+      164:  476:bool ObstacleManager::shouldRememberObstacle(
+        -:  477:    uint32_t currentTimestampMs) const
+        -:  478:{
+      164:  479:    if (!m_config.enableObstacleMemory)
+        -:  480:    {
+    #####:  481:        return false;
+        -:  482:    }
+        -:  483:
+        -:  484:    //-----------------------------------------
+        -:  485:    // Memory timeout
+        -:  486:    //-----------------------------------------
+        -:  487:
+      164:  488:    return (
+      328:  489:               currentTimestampMs -
+      328:  490:               m_memory.lastSeenTimestampMs) <=
+      164:  491:           m_config.obstacleMemoryMs;
+      164:  492:}

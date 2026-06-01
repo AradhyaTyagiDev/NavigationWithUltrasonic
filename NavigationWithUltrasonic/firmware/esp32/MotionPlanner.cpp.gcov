@@ -1,0 +1,1023 @@
+        -:    0:Source:lib/shared/core/motion/src/MotionPlanner.cpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-MotionPlanner.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-MotionPlanner.gcda
+        -:    0:Runs:1
+        -:    1://====================================================
+        -:    2:// File: MotionPlanner.cpp
+        -:    3://====================================================
+        -:    4:
+        -:    5:#include "motion/include/MotionPlanner.hpp"
+        -:    6:
+        -:    7:#include <algorithm>
+        -:    8:#include <cmath>
+        -:    9:
+        -:   10://====================================================
+        -:   11:// Constructor
+        -:   12://====================================================
+        -:   13:
+      159:   14:MotionPlanner::MotionPlanner(
+        -:   15:    const MotionPlannerConfig &config)
+       53:   16:    : m_config(config)
+       53:   17:{
+      106:   18:}
+        -:   19:
+        -:   20://====================================================
+        -:   21:// Main locomotion planning pipeline
+        -:   22://====================================================
+        -:   23:
+      200:   24:MotionCommand MotionPlanner::process(
+        -:   25:    const NavigationDecision &navigationDecision,
+        -:   26:    uint32_t currentTimestampMs)
+        -:   27:{
+      200:   28:    MotionCommand command;
+        -:   29:
+        -:   30:    //-----------------------------------------
+        -:   31:    // Timestamp
+        -:   32:    //-----------------------------------------
+        -:   33:
+      200:   34:    command.timestampMs =
+      200:   35:        currentTimestampMs;
+        -:   36:
+        -:   37:    //-----------------------------------------
+        -:   38:    // Delta time
+        -:   39:    //-----------------------------------------
+        -:   40:
+      200:   41:    float deltaTimeSec = 0.02f;
+        -:   42:
+        -:   43:    if (
+      200:   44:        m_memory.lastUpdateTimestampMs > 0)
+        -:   45:    {
+      160:   46:        deltaTimeSec =
+        -:   47:            static_cast<float>(
+      320:   48:                currentTimestampMs -
+      320:   49:                m_memory.lastUpdateTimestampMs) /
+        -:   50:            1000.0f;
+        -:   51:
+      160:   52:        deltaTimeSec =
+      160:   53:            std::clamp(
+        -:   54:                deltaTimeSec,
+      160:   55:                0.001f,
+      160:   56:                0.1f);
+      160:   57:    }
+        -:   58:
+        -:   59:    //-----------------------------------------
+        -:   60:    // Determine target state
+        -:   61:    //-----------------------------------------
+        -:   62:
+      200:   63:    MotionState targetState =
+      200:   64:        determineMotionState(
+      200:   65:            navigationDecision);
+        -:   66:
+        -:   67:    //-----------------------------------------
+        -:   68:    // Emergency override
+        -:   69:    //-----------------------------------------
+        -:   70:
+        -:   71:    if (
+      200:   72:        m_config.enableEmergencyBraking &&
+      200:   73:        shouldTriggerEmergencyBraking(
+      200:   74:            navigationDecision))
+        -:   75:    {
+        9:   76:        targetState =
+        -:   77:            MotionState::EmergencyBraking;
+        9:   78:    }
+        -:   79:
+        -:   80:    //-----------------------------------------
+        -:   81:    // Emergency brake persistence
+        -:   82:    //-----------------------------------------
+        -:   83:
+        -:   84:    if (
+      200:   85:        isEmergencyBrakeLocked(
+      200:   86:            currentTimestampMs))
+        -:   87:    {
+        6:   88:        targetState =
+        -:   89:            MotionState::EmergencyBraking;
+        6:   90:    }
+        -:   91:
+        -:   92:    //-----------------------------------------
+        -:   93:    // Escape timeout
+        -:   94:    //-----------------------------------------
+        -:   95:
+        -:   96:    if (
+      200:   97:        targetState ==
+        -:   98:        MotionState::Escaping)
+        -:   99:    {
+        6:  100:        const uint32_t elapsed =
+       12:  101:            currentTimestampMs -
+        6:  102:            m_memory.stateEntryTimestampMs;
+        -:  103:
+        -:  104:        if (
+       12:  105:            elapsed >
+        6:  106:            m_config.escapeManeuverDurationMs)
+        -:  107:        {
+        1:  108:            targetState =
+        -:  109:                MotionState::Turning;
+        1:  110:        }
+        6:  111:    }
+        -:  112:
+        -:  113:    //-----------------------------------------
+        -:  114:    // Transition validation
+        -:  115:    //-----------------------------------------
+        -:  116:
+        -:  117:    if (
+      200:  118:        !canTransitionToState(
+      200:  119:            targetState,
+      200:  120:            currentTimestampMs))
+        -:  121:    {
+        3:  122:        targetState =
+        3:  123:            m_memory.currentState;
+        3:  124:    }
+        -:  125:
+        -:  126:    //-----------------------------------------
+        -:  127:    // Assign state
+        -:  128:    //-----------------------------------------
+        -:  129:
+      200:  130:    command.state =
+      200:  131:        targetState;
+        -:  132:
+        -:  133:    //-----------------------------------------
+        -:  134:    // Confidence
+        -:  135:    //-----------------------------------------
+        -:  136:
+      200:  137:    command.motionConfidence =
+      200:  138:        std::clamp(
+      200:  139:            navigationDecision.navigationConfidence,
+      200:  140:            0.0f,
+      200:  141:            1.0f);
+        -:  142:
+        -:  143:    //-----------------------------------------
+        -:  144:    // Motion target generation
+        -:  145:    //-----------------------------------------
+        -:  146:
+      200:  147:    float linearSpeed =
+      200:  148:        calculateTargetLinearSpeed(
+      200:  149:            navigationDecision);
+        -:  150:
+      200:  151:    float angularSpeed =
+      200:  152:        calculateTargetAngularSpeed(
+      200:  153:            navigationDecision);
+        -:  154:
+      200:  155:    float steeringCurvature =
+      200:  156:        calculateSteeringCurvature(
+      200:  157:            navigationDecision);
+        -:  158:
+        -:  159:    //-----------------------------------------
+        -:  160:    // Steering rate limiter
+        -:  161:    //-----------------------------------------
+        -:  162:
+      200:  163:    steeringCurvature =
+      200:  164:        applySteeringRateLimit(
+      200:  165:            steeringCurvature,
+      200:  166:            m_memory.previousSteeringCurvature,
+      200:  167:            deltaTimeSec);
+        -:  168:
+        -:  169:    //-----------------------------------------
+        -:  170:    // Steering smoothing
+        -:  171:    //-----------------------------------------
+        -:  172:
+        -:  173:    if (
+      200:  174:        m_config.enableMotionSmoothing)
+        -:  175:    {
+      193:  176:        steeringCurvature =
+      193:  177:            applySteeringSmoothing(
+      193:  178:                steeringCurvature,
+      193:  179:                m_memory.previousSteeringCurvature);
+      193:  180:    }
+        -:  181:
+        -:  182:    //-----------------------------------------
+        -:  183:    // Differential drive planning
+        -:  184:    //-----------------------------------------
+        -:  185:
+      200:  186:    float leftWheelTarget = 0.0f;
+      200:  187:    float rightWheelTarget = 0.0f;
+        -:  188:
+      200:  189:    generateDifferentialDriveTargets(
+      200:  190:        linearSpeed,
+      200:  191:        angularSpeed,
+      200:  192:        steeringCurvature,
+        -:  193:        leftWheelTarget,
+        -:  194:        rightWheelTarget);
+        -:  195:
+        -:  196:    //-----------------------------------------
+        -:  197:    // Unsafe reverse transition protection
+        -:  198:    //-----------------------------------------
+        -:  199:
+        -:  200:    if (
+      200:  201:        isUnsafeDirectionChange(
+      200:  202:            leftWheelTarget,
+      200:  203:            m_memory.currentLeftWheelSpeed))
+        -:  204:    {
+        2:  205:        leftWheelTarget = 0.0f;
+        2:  206:    }
+        -:  207:
+        -:  208:    if (
+      200:  209:        isUnsafeDirectionChange(
+      200:  210:            rightWheelTarget,
+      200:  211:            m_memory.currentRightWheelSpeed))
+        -:  212:    {
+        2:  213:        rightWheelTarget = 0.0f;
+        2:  214:    }
+        -:  215:
+        -:  216:    //-----------------------------------------
+        -:  217:    // Acceleration / deceleration separation
+        -:  218:    //-----------------------------------------
+        -:  219:
+        -:  220:    if (
+      400:  221:        fabs(leftWheelTarget) >
+      200:  222:        fabs(m_memory.currentLeftWheelSpeed))
+        -:  223:    {
+      166:  224:        leftWheelTarget =
+      166:  225:            applyAccelerationLimit(
+      166:  226:                leftWheelTarget,
+      166:  227:                m_memory.currentLeftWheelSpeed,
+      166:  228:                deltaTimeSec);
+      166:  229:    }
+        -:  230:    else
+        -:  231:    {
+       34:  232:        leftWheelTarget =
+       34:  233:            applyDecelerationLimit(
+       34:  234:                leftWheelTarget,
+       34:  235:                m_memory.currentLeftWheelSpeed,
+       34:  236:                deltaTimeSec);
+        -:  237:    }
+        -:  238:
+        -:  239:    if (
+      400:  240:        fabs(rightWheelTarget) >
+      200:  241:        fabs(m_memory.currentRightWheelSpeed))
+        -:  242:    {
+      166:  243:        rightWheelTarget =
+      166:  244:            applyAccelerationLimit(
+      166:  245:                rightWheelTarget,
+      166:  246:                m_memory.currentRightWheelSpeed,
+      166:  247:                deltaTimeSec);
+      166:  248:    }
+        -:  249:    else
+        -:  250:    {
+       34:  251:        rightWheelTarget =
+       34:  252:            applyDecelerationLimit(
+       34:  253:                rightWheelTarget,
+       34:  254:                m_memory.currentRightWheelSpeed,
+       34:  255:                deltaTimeSec);
+        -:  256:    }
+        -:  257:
+        -:  258:    //-----------------------------------------
+        -:  259:    // Wheel smoothing
+        -:  260:    //-----------------------------------------
+        -:  261:
+        -:  262:    if (
+      200:  263:        m_config.enableMotionSmoothing)
+        -:  264:    {
+      193:  265:        leftWheelTarget =
+      193:  266:            applyWheelSpeedSmoothing(
+      193:  267:                leftWheelTarget,
+      193:  268:                m_memory.currentLeftWheelSpeed);
+        -:  269:
+      193:  270:        rightWheelTarget =
+      193:  271:            applyWheelSpeedSmoothing(
+      193:  272:                rightWheelTarget,
+      193:  273:                m_memory.currentRightWheelSpeed);
+      193:  274:    }
+        -:  275:
+        -:  276:    //-----------------------------------------
+        -:  277:    // Saturation
+        -:  278:    //-----------------------------------------
+        -:  279:
+      200:  280:    applyWheelSaturation(
+        -:  281:        leftWheelTarget,
+        -:  282:        rightWheelTarget);
+        -:  283:
+        -:  284:    //-----------------------------------------
+        -:  285:    // Deadzone
+        -:  286:    //-----------------------------------------
+        -:  287:
+      200:  288:    leftWheelTarget =
+      200:  289:        applyWheelDeadzone(
+      200:  290:            leftWheelTarget);
+        -:  291:
+      200:  292:    rightWheelTarget =
+      200:  293:        applyWheelDeadzone(
+      200:  294:            rightWheelTarget);
+        -:  295:
+        -:  296:    //-----------------------------------------
+        -:  297:    // NaN / Inf protection
+        -:  298:    //-----------------------------------------
+        -:  299:
+        -:  300:    if (
+      200:  301:        std::isnan(leftWheelTarget) ||
+      199:  302:        std::isinf(leftWheelTarget))
+        -:  303:    {
+        1:  304:        leftWheelTarget = 0.0f;
+        1:  305:    }
+        -:  306:
+        -:  307:    if (
+      200:  308:        std::isnan(rightWheelTarget) ||
+      199:  309:        std::isinf(rightWheelTarget))
+        -:  310:    {
+        1:  311:        rightWheelTarget = 0.0f;
+        1:  312:    }
+        -:  313:
+        -:  314:    //-----------------------------------------
+        -:  315:    // Final wheel targets
+        -:  316:    //-----------------------------------------
+        -:  317:
+      200:  318:    command.leftWheelSpeed =
+      200:  319:        leftWheelTarget;
+        -:  320:
+      200:  321:    command.rightWheelSpeed =
+      200:  322:        rightWheelTarget;
+        -:  323:
+        -:  324:    //-----------------------------------------
+        -:  325:    // Motion targets
+        -:  326:    //-----------------------------------------
+        -:  327:
+      200:  328:    command.targetLinearSpeed =
+      200:  329:        linearSpeed;
+        -:  330:
+      200:  331:    command.targetAngularSpeedDegPerSec =
+      200:  332:        angularSpeed;
+        -:  333:
+      200:  334:    command.steeringCurvature =
+      200:  335:        steeringCurvature;
+        -:  336:
+      200:  337:    command.desiredTurnAngleDeg =
+      200:  338:        navigationDecision.desiredTurnAngleDeg;
+        -:  339:
+        -:  340:    //-----------------------------------------
+        -:  341:    // Flags
+        -:  342:    //-----------------------------------------
+        -:  343:
+      200:  344:    command.smoothingEnabled =
+      200:  345:        m_config.enableMotionSmoothing;
+        -:  346:
+      200:  347:    command.stabilityControlActive =
+      200:  348:        m_config.enableStabilityControl;
+        -:  349:
+      200:  350:    command.reverseMotionActive =
+      200:  351:        (linearSpeed < 0.0f);
+        -:  352:
+      200:  353:    command.escapeManeuverActive =
+      200:  354:        (targetState ==
+        -:  355:         MotionState::Escaping);
+        -:  356:
+        -:  357:    //-----------------------------------------
+        -:  358:    // Predictive braking
+        -:  359:    //-----------------------------------------
+        -:  360:
+        -:  361:    if (
+      200:  362:        m_config.enablePredictiveBraking)
+        -:  363:    {
+      200:  364:        applyPredictiveBraking(
+        -:  365:            command,
+      200:  366:            navigationDecision);
+      200:  367:    }
+        -:  368:
+        -:  369:    //-----------------------------------------
+        -:  370:    // Emergency braking
+        -:  371:    //-----------------------------------------
+        -:  372:
+        -:  373:    if (
+      200:  374:        targetState ==
+        -:  375:        MotionState::EmergencyBraking)
+        -:  376:    {
+       11:  377:        applyEmergencyBraking(
+        -:  378:            command);
+       11:  379:    }
+        -:  380:
+        -:  381:    //-----------------------------------------
+        -:  382:    // Persistence
+        -:  383:    //-----------------------------------------
+        -:  384:
+      200:  385:    command.stabilityControlActive =
+      200:  386:        shouldPersistMotion(
+      200:  387:            targetState,
+      200:  388:            currentTimestampMs);
+        -:  389:
+        -:  390:    //-----------------------------------------
+        -:  391:    // Update memory
+        -:  392:    //-----------------------------------------
+        -:  393:
+      200:  394:    updateMotionMemory(
+        -:  395:        command,
+      200:  396:        currentTimestampMs);
+        -:  397:
+      200:  398:    return command;
+        -:  399:}
+        -:  400:
+        -:  401://====================================================
+        -:  402:// Motion state determination
+        -:  403://====================================================
+        -:  404:
+      200:  405:MotionState MotionPlanner::determineMotionState(
+        -:  406:    const NavigationDecision &navigationDecision) const
+        -:  407:{
+      200:  408:    switch (navigationDecision.state)
+        -:  409:    {
+        -:  410:    case NavigationState::Forward:
+        -:  411:
+      156:  412:        return MotionState::Cruising;
+        -:  413:
+        -:  414:    case NavigationState::CautiousForward:
+        -:  415:
+        9:  416:        return MotionState::Cruising;
+        -:  417:
+        -:  418:    case NavigationState::Avoiding:
+        -:  419:
+        8:  420:        return MotionState::Turning;
+        -:  421:
+        -:  422:    case NavigationState::EscapeMode:
+        -:  423:
+        6:  424:        return MotionState::Escaping;
+        -:  425:
+        -:  426:    case NavigationState::EmergencyStop:
+        -:  427:
+        9:  428:        return MotionState::EmergencyBraking;
+        -:  429:
+        -:  430:    case NavigationState::Blocked:
+        -:  431:
+        1:  432:        return MotionState::Braking;
+        -:  433:
+        -:  434:    default:
+        -:  435:
+       11:  436:        return MotionState::Idle;
+        -:  437:    }
+      200:  438:}
+        -:  439:
+        -:  440://====================================================
+        -:  441:// Transition validation
+        -:  442://====================================================
+        -:  443:
+      200:  444:bool MotionPlanner::canTransitionToState(
+        -:  445:    MotionState newState,
+        -:  446:    uint32_t currentTimestampMs) const
+        -:  447:{
+        -:  448:    if (
+      400:  449:        newState ==
+      200:  450:        m_memory.currentState)
+        -:  451:    {
+      159:  452:        return true;
+        -:  453:    }
+        -:  454:
+        -:  455:    //-----------------------------------------
+        -:  456:    // Emergency override bypass
+        -:  457:    //-----------------------------------------
+        -:  458:
+        -:  459:    if (
+       41:  460:        newState ==
+        -:  461:        MotionState::EmergencyBraking)
+        -:  462:    {
+        5:  463:        return true;
+        -:  464:    }
+        -:  465:
+        -:  466:    //-----------------------------------------
+        -:  467:    // Cooldown
+        -:  468:    //-----------------------------------------
+        -:  469:
+        -:  470:    if (
+       72:  471:        currentTimestampMs <
+       36:  472:        m_memory.cooldownUntilTimestampMs)
+        -:  473:    {
+        1:  474:        return false;
+        -:  475:    }
+        -:  476:
+        -:  477:    //-----------------------------------------
+        -:  478:    // Minimum persistence
+        -:  479:    //-----------------------------------------
+        -:  480:
+       35:  481:    const uint32_t elapsed =
+       70:  482:        currentTimestampMs -
+       35:  483:        m_memory.stateEntryTimestampMs;
+        -:  484:
+       35:  485:    return (
+       70:  486:        elapsed >=
+       35:  487:        m_config.minimumMotionDurationMs);
+      200:  488:}
+        -:  489:
+        -:  490://====================================================
+        -:  491:// Emergency braking detection
+        -:  492://====================================================
+        -:  493:
+      200:  494:bool MotionPlanner::shouldTriggerEmergencyBraking(
+        -:  495:    const NavigationDecision &navigationDecision) const
+        -:  496:{
+      200:  497:    return (
+      200:  498:        navigationDecision.emergencyOverride);
+        -:  499:}
+        -:  500:
+        -:  501://====================================================
+        -:  502:// Emergency brake persistence
+        -:  503://====================================================
+        -:  504:
+      200:  505:bool MotionPlanner::isEmergencyBrakeLocked(
+        -:  506:    uint32_t currentTimestampMs) const
+        -:  507:{
+        -:  508:    if (
+      200:  509:        m_memory.currentState !=
+        -:  510:        MotionState::EmergencyBraking)
+        -:  511:    {
+      194:  512:        return false;
+        -:  513:    }
+        -:  514:
+        6:  515:    const uint32_t elapsed =
+       12:  516:        currentTimestampMs -
+        6:  517:        m_memory.stateEntryTimestampMs;
+        -:  518:
+        6:  519:    return (
+       12:  520:        elapsed <
+        6:  521:        m_config.minimumEmergencyBrakeDurationMs);
+      200:  522:}
+        -:  523:
+        -:  524://====================================================
+        -:  525:// Linear speed planning
+        -:  526://====================================================
+        -:  527:
+      200:  528:float MotionPlanner::calculateTargetLinearSpeed(
+        -:  529:    const NavigationDecision &navigationDecision) const
+        -:  530:{
+      200:  531:    float speed =
+      200:  532:        navigationDecision.targetSpeedPercent;
+        -:  533:
+        -:  534:    //-----------------------------------------
+        -:  535:    // Escape reverse motion
+        -:  536:    //-----------------------------------------
+        -:  537:
+        -:  538:    if (
+      200:  539:        navigationDecision.escapeBehaviorActive)
+        -:  540:    {
+        6:  541:        speed *= -1.0f;
+        6:  542:    }
+        -:  543:
+      200:  544:    return speed;
+        -:  545:}
+        -:  546:
+        -:  547://====================================================
+        -:  548:// Angular speed planning
+        -:  549://====================================================
+        -:  550:
+      200:  551:float MotionPlanner::calculateTargetAngularSpeed(
+        -:  552:    const NavigationDecision &navigationDecision) const
+        -:  553:{
+      200:  554:    return navigationDecision.desiredTurnAngleDeg;
+        -:  555:}
+        -:  556:
+        -:  557://====================================================
+        -:  558:// Steering curvature planning
+        -:  559://====================================================
+        -:  560:
+      200:  561:float MotionPlanner::calculateSteeringCurvature(
+        -:  562:    const NavigationDecision &navigationDecision) const
+        -:  563:{
+      200:  564:    float curvature =
+      200:  565:        navigationDecision.desiredTurnAngleDeg /
+        -:  566:        90.0f;
+        -:  567:
+      200:  568:    return std::clamp(
+        -:  569:        curvature,
+      200:  570:        -m_config.maxSteeringCurvature,
+      200:  571:        m_config.maxSteeringCurvature);
+        -:  572:}
+        -:  573:
+        -:  574://====================================================
+        -:  575:// Differential drive generation
+        -:  576://====================================================
+        -:  577:
+      200:  578:void MotionPlanner::generateDifferentialDriveTargets(
+        -:  579:    float linearSpeed,
+        -:  580:    float angularSpeed,
+        -:  581:    float steeringCurvature,
+        -:  582:    float &leftWheelTarget,
+        -:  583:    float &rightWheelTarget) const
+        -:  584:{
+        -:  585:    //-----------------------------------------
+        -:  586:    // Pivot turning
+        -:  587:    //-----------------------------------------
+        -:  588:
+        -:  589:    if (
+      400:  590:        fabs(angularSpeed) >=
+      200:  591:        m_config.pivotTurnThresholdDeg)
+        -:  592:    {
+        1:  593:        const float pivotSpeed =
+        1:  594:            m_config.pivotTurnSpeed;
+        -:  595:
+        1:  596:        leftWheelTarget =
+        1:  597:            (angularSpeed > 0.0f)
+        1:  598:                ? -pivotSpeed
+    #####:  599:                : pivotSpeed;
+        -:  600:
+        1:  601:        rightWheelTarget =
+        1:  602:            (angularSpeed > 0.0f)
+        1:  603:                ? pivotSpeed
+    #####:  604:                : -pivotSpeed;
+        -:  605:
+        1:  606:        return;
+        -:  607:    }
+        -:  608:
+        -:  609:    //-----------------------------------------
+        -:  610:    // Differential steering
+        -:  611:    //-----------------------------------------
+        -:  612:
+      199:  613:    leftWheelTarget =
+      398:  614:        linearSpeed -
+      199:  615:        steeringCurvature;
+        -:  616:
+      199:  617:    rightWheelTarget =
+      398:  618:        linearSpeed +
+      199:  619:        steeringCurvature;
+        -:  620:
+        -:  621:    //-----------------------------------------
+        -:  622:    // Normalize
+        -:  623:    //-----------------------------------------
+        -:  624:
+      199:  625:    const float maxMagnitude =
+      199:  626:        std::max(
+      199:  627:            fabs(leftWheelTarget),
+      199:  628:            fabs(rightWheelTarget));
+        -:  629:
+        -:  630:    if (
+      398:  631:        maxMagnitude >
+      199:  632:        m_config.wheelNormalizationLimit)
+        -:  633:    {
+        2:  634:        leftWheelTarget /=
+        2:  635:            maxMagnitude;
+        -:  636:
+        2:  637:        rightWheelTarget /=
+        2:  638:            maxMagnitude;
+        2:  639:    }
+      200:  640:}
+        -:  641:
+        -:  642://====================================================
+        -:  643:// Wheel smoothing
+        -:  644://====================================================
+        -:  645:
+      386:  646:float MotionPlanner::applyWheelSpeedSmoothing(
+        -:  647:    float targetSpeed,
+        -:  648:    float currentSpeed) const
+        -:  649:{
+      386:  650:    return (
+      386:  651:               m_config.wheelSpeedSmoothingAlpha *
+      772:  652:               targetSpeed) +
+      386:  653:           ((1.0f -
+      772:  654:             m_config.wheelSpeedSmoothingAlpha) *
+      386:  655:            currentSpeed);
+        -:  656:}
+        -:  657:
+        -:  658://====================================================
+        -:  659:// Steering smoothing
+        -:  660://====================================================
+        -:  661:
+      193:  662:float MotionPlanner::applySteeringSmoothing(
+        -:  663:    float targetCurvature,
+        -:  664:    float currentCurvature) const
+        -:  665:{
+      193:  666:    return (
+      193:  667:               m_config.steeringSmoothingAlpha *
+      386:  668:               targetCurvature) +
+      193:  669:           ((1.0f -
+      386:  670:             m_config.steeringSmoothingAlpha) *
+      193:  671:            currentCurvature);
+        -:  672:}
+        -:  673:
+        -:  674://====================================================
+        -:  675:// Steering rate limiting
+        -:  676://====================================================
+        -:  677:
+      200:  678:float MotionPlanner::applySteeringRateLimit(
+        -:  679:    float target,
+        -:  680:    float current,
+        -:  681:    float deltaTimeSec) const
+        -:  682:{
+      200:  683:    const float maxDelta =
+      400:  684:        m_config.steeringRateLimitPerSec *
+      200:  685:        deltaTimeSec;
+        -:  686:
+      200:  687:    float delta =
+      200:  688:        target - current;
+        -:  689:
+      200:  690:    delta =
+      200:  691:        std::clamp(
+        -:  692:            delta,
+      200:  693:            -maxDelta,
+        -:  694:            maxDelta);
+        -:  695:
+      200:  696:    return current + delta;
+        -:  697:}
+        -:  698:
+        -:  699://====================================================
+        -:  700:// Unsafe direction change
+        -:  701://====================================================
+        -:  702:
+      400:  703:bool MotionPlanner::isUnsafeDirectionChange(
+        -:  704:    float targetSpeed,
+        -:  705:    float currentSpeed) const
+        -:  706:{
+      400:  707:    return (
+      798:  708:        (targetSpeed > 0.0f && currentSpeed < -0.1f) ||
+      398:  709:        (targetSpeed < 0.0f && currentSpeed > 0.1f));
+        -:  710:}
+        -:  711:
+        -:  712://====================================================
+        -:  713:// Acceleration limiting
+        -:  714://====================================================
+        -:  715:
+      332:  716:float MotionPlanner::applyAccelerationLimit(
+        -:  717:    float targetSpeed,
+        -:  718:    float currentSpeed,
+        -:  719:    float deltaTimeSec) const
+        -:  720:{
+      332:  721:    const float maxDelta =
+      664:  722:        m_config.maxAccelerationPerSec *
+      332:  723:        deltaTimeSec;
+        -:  724:
+      332:  725:    float delta =
+      664:  726:        targetSpeed -
+      332:  727:        currentSpeed;
+        -:  728:
+      332:  729:    delta =
+      332:  730:        std::clamp(
+        -:  731:            delta,
+      332:  732:            -maxDelta,
+        -:  733:            maxDelta);
+        -:  734:
+      332:  735:    return currentSpeed + delta;
+        -:  736:}
+        -:  737:
+        -:  738://====================================================
+        -:  739:// Deceleration limiting
+        -:  740://====================================================
+        -:  741:
+       68:  742:float MotionPlanner::applyDecelerationLimit(
+        -:  743:    float targetSpeed,
+        -:  744:    float currentSpeed,
+        -:  745:    float deltaTimeSec) const
+        -:  746:{
+       68:  747:    const float maxDelta =
+      136:  748:        m_config.maxDecelerationPerSec *
+       68:  749:        deltaTimeSec;
+        -:  750:
+       68:  751:    float delta =
+      136:  752:        targetSpeed -
+       68:  753:        currentSpeed;
+        -:  754:
+       68:  755:    delta =
+       68:  756:        std::clamp(
+        -:  757:            delta,
+       68:  758:            -maxDelta,
+        -:  759:            maxDelta);
+        -:  760:
+       68:  761:    return currentSpeed + delta;
+        -:  762:}
+        -:  763:
+        -:  764://====================================================
+        -:  765:// Wheel saturation
+        -:  766://====================================================
+        -:  767:
+      200:  768:void MotionPlanner::applyWheelSaturation(
+        -:  769:    float &leftWheelSpeed,
+        -:  770:    float &rightWheelSpeed) const
+        -:  771:{
+      200:  772:    leftWheelSpeed =
+      200:  773:        std::clamp(
+      200:  774:            leftWheelSpeed,
+      200:  775:            -m_config.maxReverseWheelSpeed,
+      200:  776:            m_config.maxWheelSpeed);
+        -:  777:
+      200:  778:    rightWheelSpeed =
+      200:  779:        std::clamp(
+      200:  780:            rightWheelSpeed,
+      200:  781:            -m_config.maxReverseWheelSpeed,
+      200:  782:            m_config.maxWheelSpeed);
+      200:  783:}
+        -:  784:
+        -:  785://====================================================
+        -:  786:// Wheel deadzone
+        -:  787://====================================================
+        -:  788:
+      400:  789:float MotionPlanner::applyWheelDeadzone(
+        -:  790:    float speed) const
+        -:  791:{
+        -:  792:    if (
+      800:  793:        fabs(speed) <
+      400:  794:        m_config.wheelDeadzone)
+        -:  795:    {
+       44:  796:        return 0.0f;
+        -:  797:    }
+        -:  798:
+      356:  799:    return speed;
+      400:  800:}
+        -:  801:
+        -:  802://====================================================
+        -:  803:// Predictive braking
+        -:  804://====================================================
+        -:  805:
+      200:  806:void MotionPlanner::applyPredictiveBraking(
+        -:  807:    MotionCommand &motionCommand,
+        -:  808:    const NavigationDecision &navigationDecision) const
+        -:  809:{
+        -:  810:    if (
+      200:  811:        navigationDecision.emergencyOverride)
+        -:  812:    {
+        9:  813:        motionCommand.brakingActive = true;
+        -:  814:
+        9:  815:        motionCommand.targetDeceleration =
+        9:  816:            m_config.emergencyBrakeDecelerationPerSec;
+        9:  817:    }
+      200:  818:}
+        -:  819:
+        -:  820://====================================================
+        -:  821:// Emergency braking
+        -:  822://====================================================
+        -:  823:
+       11:  824:void MotionPlanner::applyEmergencyBraking(
+        -:  825:    MotionCommand &motionCommand)
+        -:  826:{
+       11:  827:    motionCommand.leftWheelSpeed = 0.0f;
+        -:  828:
+       11:  829:    motionCommand.rightWheelSpeed = 0.0f;
+        -:  830:
+       11:  831:    motionCommand.brakingActive = true;
+        -:  832:
+       11:  833:    motionCommand.emergencyBrakingActive = true;
+        -:  834:
+       11:  835:    motionCommand.targetDeceleration =
+       11:  836:        m_config.emergencyBrakeDecelerationPerSec;
+       11:  837:}
+        -:  838:
+        -:  839://====================================================
+        -:  840:// Motion persistence
+        -:  841://====================================================
+        -:  842:
+      200:  843:bool MotionPlanner::shouldPersistMotion(
+        -:  844:    MotionState state,
+        -:  845:    uint32_t currentTimestampMs) const
+        -:  846:{
+        -:  847:    if (
+      200:  848:        !m_config.enableMotionPersistence)
+        -:  849:    {
+        1:  850:        return false;
+        -:  851:    }
+        -:  852:
+      199:  853:    switch (state)
+        -:  854:    {
+        -:  855:    case MotionState::Turning:
+        -:  856:    case MotionState::Escaping:
+        -:  857:    case MotionState::EmergencyBraking:
+        -:  858:
+       22:  859:        return true;
+        -:  860:
+        -:  861:    default:
+        -:  862:
+      177:  863:        return false;
+        -:  864:    }
+      200:  865:}
+        -:  866:
+        -:  867://====================================================
+        -:  868:// Motion memory update
+        -:  869://====================================================
+        -:  870:
+      200:  871:void MotionPlanner::updateMotionMemory(
+        -:  872:    const MotionCommand &motionCommand,
+        -:  873:    uint32_t currentTimestampMs)
+        -:  874:{
+        -:  875:    //-----------------------------------------
+        -:  876:    // State transition
+        -:  877:    //-----------------------------------------
+        -:  878:
+        -:  879:    if (
+      400:  880:        motionCommand.state !=
+      200:  881:        m_memory.currentState)
+        -:  882:    {
+       38:  883:        m_memory.previousState =
+       38:  884:            m_memory.currentState;
+        -:  885:
+       38:  886:        m_memory.currentState =
+       38:  887:            motionCommand.state;
+        -:  888:
+       38:  889:        m_memory.lastStateChangeTimestampMs =
+       38:  890:            currentTimestampMs;
+        -:  891:
+       38:  892:        m_memory.stateEntryTimestampMs =
+       38:  893:            currentTimestampMs;
+        -:  894:
+       38:  895:        m_memory.cooldownUntilTimestampMs =
+       76:  896:            currentTimestampMs +
+       38:  897:            m_config.motionCooldownMs;
+        -:  898:
+       38:  899:        m_memory.stableFrameCount = 0;
+       38:  900:    }
+        -:  901:    else
+        -:  902:    {
+        -:  903:        if (
+      162:  904:            m_memory.stableFrameCount <
+        -:  905:            UINT32_MAX)
+        -:  906:        {
+      162:  907:            m_memory.stableFrameCount++;
+      162:  908:        }
+        -:  909:    }
+        -:  910:
+        -:  911:    //-----------------------------------------
+        -:  912:    // Stable state
+        -:  913:    //-----------------------------------------
+        -:  914:
+        -:  915:    if (
+      400:  916:        m_memory.stableFrameCount >=
+      200:  917:        m_config.minimumStableFrames)
+        -:  918:    {
+      126:  919:        m_memory.stableState =
+      126:  920:            motionCommand.state;
+      126:  921:    }
+        -:  922:
+        -:  923:    //-----------------------------------------
+        -:  924:    // Wheel history
+        -:  925:    //-----------------------------------------
+        -:  926:
+      200:  927:    m_memory.previousLeftWheelSpeed =
+      200:  928:        m_memory.currentLeftWheelSpeed;
+        -:  929:
+      200:  930:    m_memory.previousRightWheelSpeed =
+      200:  931:        m_memory.currentRightWheelSpeed;
+        -:  932:
+      200:  933:    m_memory.currentLeftWheelSpeed =
+      200:  934:        motionCommand.leftWheelSpeed;
+        -:  935:
+      200:  936:    m_memory.currentRightWheelSpeed =
+      200:  937:        motionCommand.rightWheelSpeed;
+        -:  938:
+        -:  939:    //-----------------------------------------
+        -:  940:    // Speed tracking
+        -:  941:    //-----------------------------------------
+        -:  942:
+      200:  943:    m_memory.currentLinearSpeed =
+      400:  944:        (motionCommand.leftWheelSpeed +
+      400:  945:         motionCommand.rightWheelSpeed) *
+        -:  946:        0.5f;
+        -:  947:
+      200:  948:    m_memory.currentAngularSpeedDegPerSec =
+      200:  949:        motionCommand.targetAngularSpeedDegPerSec;
+        -:  950:
+        -:  951:    //-----------------------------------------
+        -:  952:    // Steering memory
+        -:  953:    //-----------------------------------------
+        -:  954:
+      200:  955:    m_memory.previousSteeringCurvature =
+      200:  956:        motionCommand.steeringCurvature;
+        -:  957:
+        -:  958:    //-----------------------------------------
+        -:  959:    // Braking
+        -:  960:    //-----------------------------------------
+        -:  961:
+      200:  962:    m_memory.brakingActive =
+      200:  963:        motionCommand.brakingActive;
+        -:  964:
+        -:  965:    //-----------------------------------------
+        -:  966:    // Emergency tracking
+        -:  967:    //-----------------------------------------
+        -:  968:
+        -:  969:    if (
+      200:  970:        motionCommand.emergencyBrakingActive)
+        -:  971:    {
+        -:  972:        if (
+       11:  973:            m_memory.consecutiveEmergencyBrakingCount <
+        -:  974:            UINT32_MAX)
+        -:  975:        {
+       11:  976:            m_memory.consecutiveEmergencyBrakingCount++;
+       11:  977:        }
+       11:  978:    }
+        -:  979:    else
+        -:  980:    {
+      189:  981:        m_memory.consecutiveEmergencyBrakingCount = 0;
+        -:  982:    }
+        -:  983:
+        -:  984:    //-----------------------------------------
+        -:  985:    // Escape tracking
+        -:  986:    //-----------------------------------------
+        -:  987:
+        -:  988:    if (
+      200:  989:        motionCommand.escapeManeuverActive)
+        -:  990:    {
+        -:  991:        if (
+        5:  992:            m_memory.consecutiveEscapeManeuvers <
+        -:  993:            UINT32_MAX)
+        -:  994:        {
+        5:  995:            m_memory.consecutiveEscapeManeuvers++;
+        5:  996:        }
+        5:  997:    }
+        -:  998:    else
+        -:  999:    {
+      195: 1000:        m_memory.consecutiveEscapeManeuvers = 0;
+        -: 1001:    }
+        -: 1002:
+        -: 1003:    //-----------------------------------------
+        -: 1004:    // Persistence
+        -: 1005:    //-----------------------------------------
+        -: 1006:
+      200: 1007:    m_memory.persistentMotionActive =
+      200: 1008:        motionCommand.stabilityControlActive;
+        -: 1009:
+      200: 1010:    m_memory.stabilityControlActive =
+      200: 1011:        motionCommand.stabilityControlActive;
+        -: 1012:
+        -: 1013:    //-----------------------------------------
+        -: 1014:    // Update timestamp
+        -: 1015:    //-----------------------------------------
+        -: 1016:
+      200: 1017:    m_memory.lastUpdateTimestampMs =
+      200: 1018:        currentTimestampMs;
+      200: 1019:}

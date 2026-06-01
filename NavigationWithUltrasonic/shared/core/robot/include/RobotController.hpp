@@ -6,10 +6,6 @@
 
 #include <stdint.h>
 
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
-#include "freertos/task.h"
-
 #include "filter/include/UltrasonicFilter.hpp"
 #include "obstacle/include/ObstacleAnalysis.hpp"
 #include "obstacle/include/ObstacleManager.hpp"
@@ -19,8 +15,11 @@
 #include "motion/include/MotionPlanner.hpp"
 
 #include "interfaces/include/sensor/IUltrasonicSensor.hpp"
+#include "interfaces/include/logging/ILogger.hpp"
+#include "interfaces/include/synchronization/IMutex.hpp"
+#include "interfaces/include/timing/ITimer.hpp"
 
-#include "motor/controller/MotorController.hpp"
+#include "motor/controller/include/MotorController.hpp"
 
 #include "EmergencyState.hpp"
 #include "PipelineTiming.hpp"
@@ -43,7 +42,6 @@
 //  - Central Runtime Orchestrator
 //  - Pipeline Coordinator
 //  - Deterministic Execution Engine
-//  - RTOS Task Coordinator
 //  - System State Management
 //  - Fault Propagation
 //  - Emergency Coordination
@@ -87,6 +85,9 @@ public:
         NavigationManager &navigationManager,
         MotionPlanner &motionPlanner,
         MotorController &motorController,
+        IMutex &mutex,
+        ILogger &logger,
+        ITimer &timer,
         const RobotControllerConfig &config);
 
     // Destructor
@@ -212,42 +213,6 @@ private:
     bool hasPipelineTimingViolation(uint32_t pipelineDurationUs) const;
 
     //================================================
-    // RTOS task management
-    //================================================
-
-    bool createTasks();
-
-    void destroyTasks();
-
-    //================================================
-    // Task entry points
-    //================================================
-
-    static void controllerTaskEntry(void *context);
-
-    static void driverTaskEntry(void *context);
-
-    static void telemetryTaskEntry(void *context);
-
-    //================================================
-    // Task implementations
-    //================================================
-
-    void controllerTaskLoop();
-
-    void driverTaskLoop();
-
-    void telemetryTaskLoop();
-
-    //================================================
-    // Runtime synchronization
-    //================================================
-
-    void lockController();
-
-    void unlockController();
-
-    //================================================
     // Runtime validation
     //================================================
 
@@ -275,36 +240,7 @@ private:
 
     uint32_t getCurrentTimestampMs() const;
 
-private:
-    //================================================
-    // Scoped controller lock
-    //================================================
-
-    class ScopedControllerLock
-    {
-    public:
-        explicit ScopedControllerLock(
-            RobotController *controller)
-            : m_controller(controller)
-        {
-            if (m_controller != nullptr)
-            {
-                m_controller->lockController();
-            }
-        }
-
-        ~ScopedControllerLock()
-        {
-            if (m_controller != nullptr)
-            {
-                m_controller->unlockController();
-            }
-        }
-
-    private:
-        RobotController *m_controller =
-            nullptr;
-    };
+    uint32_t getCurrentTimestampUs() const;
 
 private:
     // Sensor layer
@@ -325,6 +261,11 @@ private:
     // Locomotion layer
     MotorController &m_motorController;
 
+    // Platform services
+    IMutex &m_mutex;
+    ILogger &m_logger;
+    ITimer &m_timer;
+
     // Configuration
     RobotControllerConfig m_config;
 
@@ -339,18 +280,6 @@ private:
     ObstacleAnalysis m_latestObstacleAnalysis;
     NavigationDecision m_latestNavigationDecision;
     MotionCommand m_latestMotionCommand;
-
-    //================================================
-    // RTOS tasks
-    //================================================
-    TaskHandle_t m_controllerTaskHandle = nullptr;
-    TaskHandle_t m_driverTaskHandle = nullptr;
-    TaskHandle_t m_telemetryTaskHandle = nullptr;
-
-    //================================================
-    // RTOS synchronization
-    //================================================
-    SemaphoreHandle_t m_controllerMutex = nullptr;
 
     //================================================
     // Runtime state

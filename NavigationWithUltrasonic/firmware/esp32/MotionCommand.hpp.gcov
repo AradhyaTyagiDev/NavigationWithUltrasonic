@@ -1,0 +1,95 @@
+        -:    0:Source:lib/shared/core/motion/include/MotionCommand.hpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcda
+        -:    0:Runs:1
+        -:    1://====================================================
+        -:    2:// File: MotionCommand.hpp
+        -:    3://====================================================
+        -:    4:
+        -:    5:/*
+        -:    6:Module Output: MotionCommand
+        -:    7:This structure defines:
+        -:    8: - wheel targets
+        -:    9: - braking
+        -:   10: - steering
+        -:   11: - acceleration
+        -:   12: - motion safety
+        -:   13:*/
+        -:   14:
+        -:   15:#pragma once
+        -:   16:
+        -:   17:#include <stdint.h>
+        -:   18:
+        -:   19:#include "MotionState.hpp"
+        -:   20:
+        -:   21://====================================================
+        -:   22:// MotionCommand
+        -:   23:// Final executable locomotion target.
+        -:   24://
+        -:   25:// Produced by:
+        -:   26://      MotionPlanner
+        -:   27://
+        -:   28:// Consumed by:
+        -:   29://      MotorController
+        -:   30://
+        -:   31:// IMPORTANT:
+        -:   32://      This is NOT raw PWM.
+        -:   33://====================================================
+        -:   34:
+    #####:   35:struct MotionCommand
+        -:   36:{
+        -:   37:    // Motion state
+    #####:   38:    MotionState state = MotionState::Idle;
+        -:   39:
+        -:   40:    // Left wheel target
+        -:   41:    // Range:
+        -:   42:    //      -1.0 → full reverse
+        -:   43:    //       0.0 → stop
+        -:   44:    //       1.0 → full forward
+    #####:   45:    float leftWheelSpeed = 0.0f;
+        -:   46:
+        -:   47:    // Right wheel target
+    #####:   48:    float rightWheelSpeed = 0.0f;
+        -:   49:
+        -:   50:    // Target forward speed
+    #####:   51:    float targetLinearSpeed = 0.0f;
+        -:   52:
+        -:   53:    // Target turning speed
+    #####:   54:    float targetAngularSpeedDegPerSec = 0.0f;
+        -:   55:
+        -:   56:    // Desired steering curvature: Positive: right turn, Negative: left turn
+    #####:   57:    float steeringCurvature = 0.0f;
+        -:   58:
+        -:   59:    // Desired turn angle
+    #####:   60:    float desiredTurnAngleDeg = 0.0f;
+        -:   61:
+        -:   62:    // Acceleration target
+    #####:   63:    float targetAcceleration = 0.0f;
+        -:   64:
+        -:   65:    // Deceleration target
+    #####:   66:    float targetDeceleration = 0.0f;
+        -:   67:
+        -:   68:    // Smooth locomotion enabled
+    #####:   69:    bool smoothingEnabled = true;
+        -:   70:
+        -:   71:    // Braking active
+    #####:   72:    bool brakingActive = false;
+        -:   73:
+        -:   74:    // Emergency braking active
+    #####:   75:    bool emergencyBrakingActive = false;
+        -:   76:
+        -:   77:    // Reverse motion active
+    #####:   78:    bool reverseMotionActive = false;
+        -:   79:
+        -:   80:    // Escape maneuver active
+    #####:   81:    bool escapeManeuverActive = false;
+        -:   82:
+        -:   83:    // Motion stability active
+    #####:   84:    bool stabilityControlActive = true;
+        -:   85:
+        -:   86:    // Motion confidence
+    #####:   87:    float motionConfidence = 1.0f;
+        -:   88:
+        -:   89:    // Timestamp
+    #####:   90:    uint32_t timestampMs = 0;
+        -:   91:};

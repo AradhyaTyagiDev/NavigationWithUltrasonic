@@ -1,0 +1,56 @@
+        -:    0:Source:lib/shared/core/robot/include/SystemHealth.hpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcda
+        -:    0:Runs:1
+        -:    1://====================================================
+        -:    2:// File: SystemHealth.hpp
+        -:    3://====================================================
+        -:    4:
+        -:    5:#pragma once
+        -:    6:
+        -:    7:#include <stdint.h>
+        -:    8:
+        -:    9://====================================================
+        -:   10:// SystemHealth
+        -:   11://====================================================
+        -:   12://
+        -:   13:// Global robotics runtime health.
+        -:   14://
+        -:   15:// Tracks:
+        -:   16://      sensor health
+        -:   17://      driver health
+        -:   18://      timing health
+        -:   19://      locomotion health
+        -:   20://      runtime stability
+        -:   21://
+        -:   22://====================================================
+        -:   23:
+       36:   24:struct SystemHealth
+        -:   25:{
+        -:   26:    // Overall system healthy
+       36:   27:    bool systemHealthy = true;
+        -:   28:    // Sensor subsystem
+       36:   29:    bool sensorHealthy = true;
+        -:   30:    // Filter subsystem
+       36:   31:    bool filterHealthy = true;
+        -:   32:    // Navigation subsystem
+       36:   33:    bool navigationHealthy = true;
+        -:   34:    // Motion subsystem
+       36:   35:    bool motionHealthy = true;
+        -:   36:    // Motor subsystem
+       36:   37:    bool motorHealthy = true;
+        -:   38:    // Driver subsystem
+       36:   39:    bool driverHealthy = true;
+        -:   40:    // Runtime timing healthy
+       36:   41:    bool timingHealthy = true;
+        -:   42:    // Emergency active
+       36:   43:    bool emergencyActive = false;
+        -:   44:    // Fault active
+       36:   45:    bool faultActive = false;
+        -:   46:    // Consecutive runtime faults
+       36:   47:    uint32_t consecutiveFaultCount = 0;
+        -:   48:    // Last fault timestamp
+       36:   49:    uint32_t lastFaultTimestampMs = 0;
+        -:   50:    // Last successful pipeline timestamp
+       36:   51:    uint32_t lastHealthyTimestampMs = 0;
+        -:   52:};

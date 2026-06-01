@@ -1,0 +1,303 @@
+        -:    0:Source:lib/shared/core/robot/include/RobotController.hpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcda
+        -:    0:Runs:1
+        -:    1://====================================================
+        -:    2:// File: RobotController.hpp
+        -:    3://====================================================
+        -:    4:
+        -:    5:#pragma once
+        -:    6:
+        -:    7:#include <stdint.h>
+        -:    8:
+        -:    9:#include "filter/include/UltrasonicFilter.hpp"
+        -:   10:#include "obstacle/include/ObstacleAnalysis.hpp"
+        -:   11:#include "obstacle/include/ObstacleManager.hpp"
+        -:   12:#include "navigation/include/NavigationDecision.hpp"
+        -:   13:#include "navigation/include/NavigationManager.hpp"
+        -:   14:#include "motion/include/MotionCommand.hpp"
+        -:   15:#include "motion/include/MotionPlanner.hpp"
+        -:   16:
+        -:   17:#include "interfaces/include/sensor/IUltrasonicSensor.hpp"
+        -:   18:#include "interfaces/include/logging/ILogger.hpp"
+        -:   19:#include "interfaces/include/synchronization/IMutex.hpp"
+        -:   20:#include "interfaces/include/timing/ITimer.hpp"
+        -:   21:
+        -:   22:#include "motor/controller/include/MotorController.hpp"
+        -:   23:
+        -:   24:#include "EmergencyState.hpp"
+        -:   25:#include "PipelineTiming.hpp"
+        -:   26:#include "RobotBehaviorMode.hpp"
+        -:   27:#include "RobotControllerConfig.hpp"
+        -:   28:#include "RobotControllerMemory.hpp"
+        -:   29:#include "RobotRuntimeFlags.hpp"
+        -:   30:#include "RobotState.hpp"
+        -:   31:#include "RuntimeStatistics.hpp"
+        -:   32:#include "SystemHealth.hpp"
+        -:   33:
+        -:   34://====================================================
+        -:   35:// RobotController
+        -:   36://====================================================
+        -:   37://
+        -:   38:// Top-level robotics orchestration engine.
+        -:   39://
+        -:   40:// RESPONSIBILITIES
+        -:   41://
+        -:   42://  - Central Runtime Orchestrator
+        -:   43://  - Pipeline Coordinator
+        -:   44://  - Deterministic Execution Engine
+        -:   45://  - System State Management
+        -:   46://  - Fault Propagation
+        -:   47://  - Emergency Coordination
+        -:   48://  - Health Monitoring
+        -:   49://  - Runtime Timing Management
+        -:   50://  - Future Expansion Point
+        -:   51://
+        -:   52:// ROBOTICS PIPELINE
+        -:   53://
+        -:   54://  Read sensors
+        -:   55://      ↓
+        -:   56://  Filter perception
+        -:   57://      ↓
+        -:   58://  Interpret environment
+        -:   59://      ↓
+        -:   60://  Decide navigation
+        -:   61://      ↓
+        -:   62://  Plan locomotion
+        -:   63://      ↓
+        -:   64://  Execute motors
+        -:   65://      ↓
+        -:   66://  Monitor runtime
+        -:   67://
+        -:   68:// IMPORTANT
+        -:   69://
+        -:   70://  RobotController MUST:
+        -:   71://      - remain deterministic
+        -:   72://      - avoid blocking
+        -:   73://      - avoid heavy allocations
+        -:   74://      - avoid slow IO
+        -:   75://
+        -:   76://====================================================
+        -:   77:
+        -:   78:class RobotController final
+        -:   79:{
+        -:   80:public:
+        -:   81:    RobotController(
+        -:   82:        IUltrasonicSensor &ultrasonicSensor,
+        -:   83:        UltrasonicFilter &ultrasonicFilter,
+        -:   84:        ObstacleManager &obstacleManager,
+        -:   85:        NavigationManager &navigationManager,
+        -:   86:        MotionPlanner &motionPlanner,
+        -:   87:        MotorController &motorController,
+        -:   88:        IMutex &mutex,
+        -:   89:        ILogger &logger,
+        -:   90:        ITimer &timer,
+        -:   91:        const RobotControllerConfig &config);
+        -:   92:
+        -:   93:    // Destructor
+        -:   94:    ~RobotController();
+        -:   95:
+        -:   96:    bool initialize();
+        -:   97:
+        -:   98:    void shutdown();
+        -:   99:
+        -:  100:    // Start runtime
+        -:  101:    bool start();
+        -:  102:
+        -:  103:    // Stop runtime
+        -:  104:    void stop();
+        -:  105:
+        -:  106:    // Runtime update
+        -:  107:    void update();
+        -:  108:
+        -:  109:    // Emergency stop
+        -:  110:    void emergencyStop();
+        -:  111:
+        -:  112:    // Clear emergency state
+        -:  113:    void clearEmergency();
+        -:  114:
+        -:  115:    // Reset runtime
+        -:  116:    void reset();
+        -:  117:
+        -:  118:    // Runtime state
+        -:  119:    RobotState getCurrentState() const;
+        -:  120:
+        -:  121:    // Runtime health
+        -:  122:    const SystemHealth &getSystemHealth() const;
+        -:  123:
+        -:  124:    // Runtime memory
+        -:  125:    const RobotControllerMemory &getMemory() const;
+        -:  126:
+        -:  127:    // Runtime behavior mode
+        -:  128:    RobotBehaviorMode getBehaviorMode() const;
+        -:  129:
+        -:  130:    // Set runtime behavior mode
+        -:  131:    void setBehaviorMode(RobotBehaviorMode mode);
+        -:  132:
+        -:  133:    // Runtime active
+        -:  134:    bool isRunning() const;
+        -:  135:
+        -:  136:    // Emergency active
+        -:  137:    bool isEmergencyActive() const;
+        -:  138:
+        -:  139:    // Fault active
+        -:  140:    bool hasFault() const;
+        -:  141:
+        -:  142:private:
+        -:  143:    // Main deterministic robotics pipeline
+        -:  144:    void executePipeline(uint32_t currentTimestampMs);
+        -:  145:
+        -:  146:    //================================================
+        -:  147:    // Pipeline stages
+        -:  148:    //================================================
+        -:  149:
+        -:  150:    void executeSensorStage(uint32_t currentTimestampMs);
+        -:  151:
+        -:  152:    void executeFilterStage(uint32_t currentTimestampMs);
+        -:  153:
+        -:  154:    void executeObstacleStage(uint32_t currentTimestampMs);
+        -:  155:
+        -:  156:    void executeNavigationStage(uint32_t currentTimestampMs);
+        -:  157:
+        -:  158:    void executeMotionStage(uint32_t currentTimestampMs);
+        -:  159:
+        -:  160:    void executeMotorStage(uint32_t currentTimestampMs);
+        -:  161:
+        -:  162:    void executeMonitoringStage(uint32_t currentTimestampMs);
+        -:  163:
+        -:  164:    //================================================
+        -:  165:    // Runtime supervision
+        -:  166:    //================================================
+        -:  167:
+        -:  168:    void performHealthMonitoring(uint32_t currentTimestampMs);
+        -:  169:
+        -:  170:    void performTimingSupervision(uint32_t currentTimestampMs);
+        -:  171:
+        -:  172:    void performEmergencySupervision(uint32_t currentTimestampMs);
+        -:  173:
+        -:  174:    void performFaultMonitoring(uint32_t currentTimestampMs);
+        -:  175:
+        -:  176:    //================================================
+        -:  177:    // State management
+        -:  178:    //================================================
+        -:  179:
+        -:  180:    void transitionToState(RobotState newState);
+        -:  181:
+        -:  182:    bool validateStateTransition(RobotState currentState, RobotState newState) const;
+        -:  183:
+        -:  184:    //================================================
+        -:  185:    // Emergency handling
+        -:  186:    //================================================
+        -:  187:
+        -:  188:    void triggerEmergency(EmergencySeverity severity, EmergencySource source, EmergencyCode code);
+        -:  189:
+        -:  190:    void clearEmergencyInternal();
+        -:  191:
+        -:  192:    bool shouldTriggerEmergency() const;
+        -:  193:
+        -:  194:    //================================================
+        -:  195:    // Fault handling
+        -:  196:    //================================================
+        -:  197:
+        -:  198:    void handleFault(const char *reason);
+        -:  199:
+        -:  200:    void recoverFromFault();
+        -:  201:
+        -:  202:    //================================================
+        -:  203:    // Runtime timing
+        -:  204:    //================================================
+        -:  205:
+        -:  206:    void beginPipelineTiming(
+        -:  207:        uint32_t currentTimestampMs);
+        -:  208:
+        -:  209:    void endPipelineTiming(uint32_t currentTimestampMs);
+        -:  210:
+        -:  211:    void updatePipelineStatistics(uint32_t pipelineDurationUs);
+        -:  212:
+        -:  213:    bool hasPipelineTimingViolation(uint32_t pipelineDurationUs) const;
+        -:  214:
+        -:  215:    //================================================
+        -:  216:    // Runtime validation
+        -:  217:    //================================================
+        -:  218:
+        -:  219:    bool validateRuntimeHealth() const;
+        -:  220:
+        -:  221:    bool validateSubsystemHealth() const;
+        -:  222:
+        -:  223:    bool validateTimingHealth() const;
+        -:  224:
+        -:  225:    bool validateEmergencyState() const;
+        -:  226:
+        -:  227:    //================================================
+        -:  228:    // Runtime memory update
+        -:  229:    //================================================
+        -:  230:
+        -:  231:    void updateRuntimeMemory(uint32_t currentTimestampMs);
+        -:  232:
+        -:  233:    void updateRuntimeStatistics();
+        -:  234:
+        -:  235:    void updateSystemHealth();
+        -:  236:
+        -:  237:    //================================================
+        -:  238:    // Timestamp utility
+        -:  239:    //================================================
+        -:  240:
+        -:  241:    uint32_t getCurrentTimestampMs() const;
+        -:  242:
+        -:  243:    uint32_t getCurrentTimestampUs() const;
+        -:  244:
+        -:  245:private:
+        -:  246:    // Sensor layer
+        -:  247:    IUltrasonicSensor &m_ultrasonicSensor;
+        -:  248:
+        -:  249:    // Filter layer
+        -:  250:    UltrasonicFilter &m_ultrasonicFilter;
+        -:  251:
+        -:  252:    // Environment layer
+        -:  253:    ObstacleManager &m_obstacleManager;
+        -:  254:
+        -:  255:    // Navigation layer
+        -:  256:    NavigationManager &m_navigationManager;
+        -:  257:
+        -:  258:    // Motion layer
+        -:  259:    MotionPlanner &m_motionPlanner;
+        -:  260:
+        -:  261:    // Locomotion layer
+        -:  262:    MotorController &m_motorController;
+        -:  263:
+        -:  264:    // Platform services
+        -:  265:    IMutex &m_mutex;
+        -:  266:    ILogger &m_logger;
+        -:  267:    ITimer &m_timer;
+        -:  268:
+        -:  269:    // Configuration
+        -:  270:    RobotControllerConfig m_config;
+        -:  271:
+        -:  272:    // Runtime memory
+        -:  273:    RobotControllerMemory m_memory;
+        -:  274:
+        -:  275:    //================================================
+        -:  276:    // Pipeline runtime data
+        -:  277:    //================================================
+        -:  278:    UltrasonicSensorData m_latestSensorData;
+        -:  279:    FilteredSensorData m_latestFilteredData;
+        -:  280:    ObstacleAnalysis m_latestObstacleAnalysis;
+        -:  281:    NavigationDecision m_latestNavigationDecision;
+        -:  282:    MotionCommand m_latestMotionCommand;
+        -:  283:
+        -:  284:    //================================================
+        -:  285:    // Runtime state
+        -:  286:    //================================================
+       36:  287:    bool m_running = false;
+       36:  288:    bool m_initialized = false;
+        -:  289:
+        -:  290:    //================================================
+        -:  291:    // Pipeline timing
+        -:  292:    //================================================
+       36:  293:    uint32_t m_pipelineStartTimestampUs = 0;
+        -:  294:
+        -:  295:    //================================================
+        -:  296:    // Runtime sequence tracking
+        -:  297:    //================================================
+       36:  298:    uint64_t m_pipelineExecutionCounter = 0;
+        -:  299:};

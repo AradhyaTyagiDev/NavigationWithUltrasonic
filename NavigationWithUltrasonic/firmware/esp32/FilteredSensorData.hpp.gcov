@@ -1,0 +1,31 @@
+        -:    0:Source:lib/shared/core/filter/include/FilteredSensorData.hpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcda
+        -:    0:Runs:1
+        -:    1:#pragma once
+        -:    2:
+        -:    3:#include <stdint.h>
+        -:    4:
+    #####:    5:struct FilteredSensorData
+        -:    6:{
+    #####:    7:    float rawDistanceCm = 0.0f;
+        -:    8:
+    #####:    9:    float filteredDistanceCm = 0.0f;
+        -:   10:
+    #####:   11:    float velocityCmPerSec = 0.0f;
+        -:   12:
+    #####:   13:    float confidence = 0.0f;
+        -:   14:
+    #####:   15:    bool isStable = false;
+        -:   16:
+    #####:   17:    bool obstacleDetected = false;
+        -:   18:
+    #####:   19:    uint32_t timestampMs = 0;
+        -:   20:
+        -:   21:    /// slow down during repeated timeouts. degraded navigation mode
+        -:   22:    /// 3 Consecutive Timeouts => Reduce confidence
+        -:   23:    /// 10 Consecutive Timeouts => Enter degraded mode (e.g., stop movement, alert user) Sensor unhealthy
+        -:   24:    /// 20 Consecutive Timeouts => Critical failure (e.g., require manual reset, alert user) Sensor failure
+    #####:   25:    bool timeoutOccurred = false;
+    #####:   26:    uint32_t consecutiveTimeouts = 0;
+        -:   27:};

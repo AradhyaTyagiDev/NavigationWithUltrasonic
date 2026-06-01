@@ -1,0 +1,50 @@
+        -:    0:Source:lib/shared/core/motor/controller/include/WheelState.hpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-MotorController.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-MotorController.gcda
+        -:    0:Runs:1
+        -:    1://====================================================
+        -:    2:// File: WheelState.hpp
+        -:    3://====================================================
+        -:    4:
+        -:    5:#pragma once
+        -:    6:
+        -:    7:#include "interfaces/include/motor/driver/MotorDriverTypes.hpp"
+        -:    8:
+        -:    9:#include <stdint.h>
+        -:   10:
+        -:   11://====================================================
+        -:   12:// WheelState: Runtime wheel execution state.
+        -:   13:// Represents: actual wheel execution runtime state
+        -:   14://====================================================
+      124:   15:struct WheelState
+        -:   16:{
+        -:   17:    // Current speed percentage
+      124:   18:    float currentSpeedPercent = 0.0f;
+        -:   19:
+        -:   20:    // Target speed percentage
+      124:   21:    float targetSpeedPercent = 0.0f;
+        -:   22:
+        -:   23:    // Current PWM duty
+      124:   24:    uint32_t currentPWMDuty = 0;
+        -:   25:
+        -:   26:    // Current direction
+      124:   27:    MotorDirection currentDirection = MotorDirection::Stop;
+        -:   28:
+        -:   29:    // Current brake mode
+      124:   30:    BrakeMode currentBrakeMode = BrakeMode::Coast;
+        -:   31:
+        -:   32:    // Ramp active
+      124:   33:    bool rampActive = false;
+        -:   34:
+        -:   35:    // Braking active
+      124:   36:    bool brakingActive = false;
+        -:   37:
+        -:   38:    // Emergency brake active
+      124:   39:    bool emergencyBrakeActive = false;
+        -:   40:
+        -:   41:    // Wheel enabled
+      124:   42:    bool enabled = true;
+        -:   43:
+        -:   44:    // Last update timestamp
+      124:   45:    uint32_t lastUpdateTimestampMs = 0;
+        -:   46:};

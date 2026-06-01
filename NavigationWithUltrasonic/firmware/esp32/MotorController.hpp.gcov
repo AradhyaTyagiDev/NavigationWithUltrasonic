@@ -1,0 +1,218 @@
+        -:    0:Source:lib/shared/core/motor/controller/include/MotorController.hpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-MotorController.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-MotorController.gcda
+        -:    0:Runs:1
+        -:    1://====================================================
+        -:    2:// File: MotorController.hpp
+        -:    3://====================================================
+        -:    4:
+        -:    5:#pragma once
+        -:    6:
+        -:    7:#include "interfaces/include/motor/driver/MotorDriverCommand.hpp"
+        -:    8:#include "interfaces/include/motor/driver/IMotorDriver.hpp"
+        -:    9:#include "interfaces/include/synchronization/IMutex.hpp"
+        -:   10:#include "interfaces/include/logging/ILogger.hpp"
+        -:   11:#include "interfaces/include/timing/ITimer.hpp"
+        -:   12:
+        -:   13:#include "motion/include/MotionCommand.hpp"
+        -:   14:#include "motor/controller/include/MotorControllerConfig.hpp"
+        -:   15:#include "motor/controller/include/MotorControllerMemory.hpp"
+        -:   16:#include "motor/controller/include/MotorState.hpp"
+        -:   17:#include "motor/controller/include/WheelCommand.hpp"
+        -:   18:#include "motor/controller/include/WheelState.hpp"
+        -:   19:
+        -:   20:#include <stdint.h>
+        -:   21:
+        -:   22://====================================================
+        -:   23:// MotorController: Real-time locomotion execution coordinator.
+        -:   24:// Converts: MotionCommand into: MotorDriverCommand: synchronized safe motor execution through: IMotorDriver
+        -:   25://  - locomotion execution coordination
+        -:   26://  - wheel synchronization
+        -:   27://  - acceleration coordination
+        -:   28://  - coordinated braking
+        -:   29://  - emergency coordination
+        -:   30://  - motion execution state machine
+        -:   31://  - runtime monitoring
+        -:   32://  - locomotion safety validation
+        -:   33://  - reverse transition protection
+        -:   34://  - fault handling
+        -:   35:// Those belong to: IMotorDriver
+        -:   36://====================================================
+        -:   37:
+        -:   38:class MotorController final
+        -:   39:{
+        -:   40:public:
+        -:   41:    // Constructor
+        -:   42:    MotorController(
+        -:   43:        IMotorDriver &motorDriver,
+        -:   44:        IMutex &mutex,
+        -:   45:        ILogger &logger,
+        -:   46:        ITimer &timer,
+        -:   47:        const MotorControllerConfig &config);
+        -:   48:
+        -:   49:    // Initialization
+        -:   50:    bool initialize();
+        -:   51:
+        -:   52:    // Shutdown
+        -:   53:    void shutdown();
+        -:   54:
+        -:   55:    // Main locomotion execution pipeline, Input: MotionCommand, Output: MotorDriverCommand execution
+        -:   56:    void executeMotion(const MotionCommand &motionCommand);
+        -:   57:
+        -:   58:    bool tryExecuteMotion(const MotionCommand &motionCommand);
+        -:   59:
+        -:   60:    // Runtime update loop
+        -:   61:    // Handles: synchronization, monitoring, fault handling, timeout supervision, execution state transitions
+        -:   62:    void update(uint32_t currentTimestampMs);
+        -:   63:
+        -:   64:    // Emergency stop
+        -:   65:    void emergencyStop();
+        -:   66:
+        -:   67:    // Clear emergency stop
+        -:   68:    void clearEmergencyStop();
+        -:   69:
+        -:   70:    // Stop locomotion
+        -:   71:    void stop();
+        -:   72:
+        -:   73:    // Reset runtime state
+        -:   74:    void reset();
+        -:   75:
+        -:   76:    // Current motor execution state
+        -:   77:    MotorState getCurrentState() const;
+        -:   78:
+        -:   79:    // Runtime memory
+        -:   80:    MotorControllerMemory getMemory() const;
+        -:   81:
+        -:   82:    // Fault state
+        -:   83:    bool hasFault() const;
+        -:   84:
+        -:   85:    // Emergency state
+        -:   86:    bool isEmergencyStopActive() const;
+        -:   87:
+        -:   88:private:
+        -:   89:    // Motion validation
+        -:   90:    bool validateMotionCommand(const MotionCommand &motionCommand) const;
+        -:   91:
+        -:   92:    // Motion safety validation
+        -:   93:    bool validateMotionSafety(const MotionCommand &motionCommand) const;
+        -:   94:
+        -:   95:    // Generate wheel commands
+        -:   96:    void generateWheelCommands(
+        -:   97:        const MotionCommand &motionCommand,
+        -:   98:        WheelCommand &leftWheelCommand,
+        -:   99:        WheelCommand &rightWheelCommand);
+        -:  100:
+        -:  101:    void executeMotionInternal(const MotionCommand &motionCommand);
+        -:  102:
+        -:  103:    // Generate left wheel command
+        -:  104:    WheelCommand generateLeftWheelCommand(const MotionCommand &motionCommand);
+        -:  105:
+        -:  106:    // Generate right wheel command
+        -:  107:    WheelCommand generateRightWheelCommand(const MotionCommand &motionCommand);
+        -:  108:
+        -:  109:    // Apply wheel synchronization
+        -:  110:    // Ensures: stable differential drive execution, synchronized acceleration, coordinated locomotion
+        -:  111:    void applyWheelSynchronization(WheelCommand &leftWheelCommand, WheelCommand &rightWheelCommand);
+        -:  112:
+        -:  113:    // Apply motion smoothing
+        -:  114:    void applyMotionSmoothing(
+        -:  115:        WheelCommand &leftWheelCommand,
+        -:  116:        WheelCommand &rightWheelCommand,
+        -:  117:        uint32_t currentTimestampMs);
+        -:  118:
+        -:  119:    // Apply acceleration limits
+        -:  120:    void applyAccelerationLimits(
+        -:  121:        WheelCommand &wheelCommand,
+        -:  122:        WheelState &wheelState,
+        -:  123:        uint32_t currentTimestampMs);
+        -:  124:
+        -:  125:    // Apply deceleration limits
+        -:  126:    void applyDecelerationLimits(
+        -:  127:        WheelCommand &wheelCommand,
+        -:  128:        WheelState &wheelState,
+        -:  129:        uint32_t currentTimestampMs);
+        -:  130:
+        -:  131:    // Apply startup boost
+        -:  132:    void applyStartupBoost(WheelCommand &wheelCommand, const WheelState &wheelState);
+        -:  133:
+        -:  134:    // Apply deadzone compensation
+        -:  135:    void applyDeadzoneCompensation(WheelCommand &wheelCommand);
+        -:  136:
+        -:  137:    // Apply coordinated braking
+        -:  138:    void applyCoordinatedBraking(WheelCommand &leftWheelCommand, WheelCommand &rightWheelCommand);
+        -:  139:
+        -:  140:    // Apply emergency behavior
+        -:  141:    void applyEmergencyBehavior(WheelCommand &leftWheelCommand, WheelCommand &rightWheelCommand);
+        -:  142:
+        -:  143:    // Reverse transition protection
+        -:  144:    bool validateReverseTransition(const WheelCommand &wheelCommand, const WheelState &wheelState) const;
+        -:  145:
+        -:  146:    // Generate motor driver command
+        -:  147:    MotorDriverCommand
+        -:  148:    generateMotorDriverCommand(
+        -:  149:        MotorChannel channel,
+        -:  150:        const WheelCommand &wheelCommand,
+        -:  151:        uint32_t sequenceId) const;
+        -:  152:
+        -:  153:    // Execute synchronized wheel commands
+        -:  154:    void executeWheelCommands(
+        -:  155:        const MotorDriverCommand &leftCommand,
+        -:  156:        const MotorDriverCommand &rightCommand);
+        -:  157:
+        -:  158:    // Runtime state transition
+        -:  159:    void transitionToState(MotorState newState);
+        -:  160:
+        -:  161:    // Determine runtime state
+        -:  162:    MotorState determineMotorState(const MotionCommand &motionCommand) const;
+        -:  163:
+        -:  164:    // Fault handling
+        -:  165:    void handleFault(const char *reason);
+        -:  166:
+        -:  167:    // Motion timeout supervision
+        -:  168:    bool hasMotionTimedOut(uint32_t currentTimestampMs) const;
+        -:  169:
+        -:  170:    // Runtime monitoring
+        -:  171:    void performRuntimeMonitoring(uint32_t currentTimestampMs);
+        -:  172:
+        -:  173:    // Update wheel runtime state
+        -:  174:    void updateWheelState(
+        -:  175:        WheelState &wheelState,
+        -:  176:        const WheelCommand &wheelCommand,
+        -:  177:        uint32_t currentTimestampMs);
+        -:  178:
+        -:  179:    // Update runtime memory
+        -:  180:    void updateRuntimeMemory(const MotionCommand &motionCommand, uint32_t currentTimestampMs);
+        -:  181:
+        -:  182:    // Timestamp utility
+        -:  183:    uint32_t getCurrentTimestampMs() const;
+        -:  184:
+        -:  185:    bool validateStateTransition(MotorState currentState, MotorState newState) const;
+        -:  186:
+        -:  187:    void stopInternal();
+        -:  188:
+        -:  189:    void emergencyStopInternal();
+        -:  190:
+        -:  191:    bool validateDriverHealth() const;
+        -:  192:
+        -:  193:    bool shouldSkipUpdate(uint32_t currentTimestampMs) const;
+        -:  194:
+        -:  195:private:
+        -:  196:    // Hardware abstraction layer
+        -:  197:    IMotorDriver &m_motorDriver;
+        -:  198:
+        -:  199:    // Runtime locomotion memory
+        -:  200:    MotorControllerMemory m_memory;
+        -:  201:
+        -:  202:    IMutex &m_mutex;
+        -:  203:
+        -:  204:    ILogger &m_logger;
+        -:  205:
+        -:  206:    ITimer &m_timer;
+        -:  207:
+        -:  208:    // Runtime sequence generator: Generates unique execution sequence IDs.
+        -:  209:    // Useful for: synchronization, telemetry, debugging, RTOS tracing
+       62:  210:    uint32_t m_sequenceCounter = 0;
+        -:  211:
+        -:  212:    // Configuration
+        -:  213:    MotorControllerConfig m_config;
+        -:  214:};

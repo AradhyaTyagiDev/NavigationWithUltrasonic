@@ -1,51 +1,43 @@
-//====================================================
-// File: MotorDriverCommand.hpp
-//====================================================
-
 #pragma once
 
-#include "MotorDriverTypes.hpp"
+#include "interfaces/include/motor/driver/MotorDriverTypes.hpp"
+
+#include <stdint.h>
 
 //====================================================
 // MotorDriverCommand
-//====================================================
-//
-// Low-level hardware-safe motor command.
-//
-// Produced by:
-//      MotorController
-//
-// Consumed by:
-//      IMotorDriver
-//
+// Hardware-neutral motor command.
+// Produced by: MotorController, Consumed by: IMotorDriver
 //====================================================
 
 struct MotorDriverCommand
 {
-    // Target motor channel
+    // Target channel
     MotorChannel channel = MotorChannel::Left;
 
     // Direction
     MotorDirection direction = MotorDirection::Stop;
 
-    // Brake mode
+    // Braking
     BrakeMode brakeMode = BrakeMode::Coast;
 
-    //-----------------------------------------
-    // Normalized speed
-    // Range:
-    //      0.0 → 1.0
+    // Normalized motor Speed: 0.0f -> 1.0f
+    // Hardware layer converts:  normalizedSpeed -> PWM duty
+    // Examples: 0.0f = stop, 0.5f = 50% speed, 1.0f = maximum speed
+    // Hardware drivers convert this value
+    // into platform-specific PWM duty cycles.
     float normalizedSpeed = 0.0f;
 
-    // PWM duty
-    uint32_t pwmDuty = 0;
+    // Motor output enabled. Enable state
+    // false: Driver disables motor output.
+    // true: Driver may drive motor according to command parameters.
+    bool enabled = true;
 
-    // Enable braking
-    bool brakingEnabled = false;
-
-    // Emergency stop
+    // Emergency stop request.
+    // When true: Driver immediately enters, emergency stop state and ignores, normal motion commands.
     bool emergencyStop = false;
 
-    // Timestamp
-    uint32_t timestampMs = 0;
+    // Sequence identifier
+    // Useful for: - debugging,  - telemetry, - synchronization
+    uint32_t sequenceId = 0;
 };

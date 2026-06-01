@@ -50,13 +50,17 @@ public:
 
     ~UltrasonicSensor();
 
-    bool initialize();
+    bool initialize() override;
 
-    bool start();
+    bool start() override;
 
-    void shutdown();
+    void shutdown() override;
 
-    bool fetchLatestData(UltrasonicSensorData &outData);
+    bool fetchLatestData(UltrasonicSensorData &outData) override;
+
+    bool isHealthy() const override;
+
+    bool isRunning() const override;
 
     QueueHandle_t getQueueHandle() const;
 
@@ -99,4 +103,8 @@ private:
     rmt_symbol_word_t m_rxBuffer[64];
 
     volatile bool m_echoReceived = false;
+
+    bool m_initialized = false;
+
+    volatile bool m_running = false;
 };

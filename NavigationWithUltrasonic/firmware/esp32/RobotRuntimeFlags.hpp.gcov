@@ -1,0 +1,41 @@
+        -:    0:Source:lib/shared/core/robot/include/RobotRuntimeFlags.hpp
+        -:    0:Graph:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcno
+        -:    0:Data:/tmp/navigation_robot_core_coverage/core_coverage_tests-RobotController.gcda
+        -:    0:Runs:1
+        -:    1://====================================================
+        -:    2:// File: RobotRuntimeFlags.hpp
+        -:    3://====================================================
+        -:    4:
+        -:    5:#pragma once
+        -:    6:
+        -:    7://====================================================
+        -:    8:// RobotRuntimeFlags
+        -:    9://====================================================
+        -:   10://
+        -:   11:// Global runtime flags.
+        -:   12://
+        -:   13:// Tracks:
+        -:   14://      emergency runtime
+        -:   15://      degraded mode
+        -:   16://      safe mode
+        -:   17://      shutdown request
+        -:   18://
+        -:   19://====================================================
+        -:   20:
+       36:   21:struct RobotRuntimeFlags
+        -:   22:{
+       36:   23:    bool emergencyActive = false;
+        -:   24:    // Degraded runtime mode
+       36:   25:    bool degradedModeActive = false;
+       36:   26:    bool safeModeActive = false;
+       36:   27:    bool shutdownRequested = false;
+        -:   28:    // Runtime paused
+       36:   29:    bool paused = false;
+       36:   30:    bool faultRecoveryActive = false;
+        -:   31:    // Sensor timeout active
+       36:   32:    bool sensorTimeoutActive = false;
+        -:   33:    // Motor timeout active
+       36:   34:    bool motorTimeoutActive = false;
+        -:   35:    // Autonomous navigation active
+       36:   36:    bool autonomousModeActive = true;
+        -:   37:};
